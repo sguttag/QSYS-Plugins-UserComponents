@@ -1,0 +1,2271 @@
+--[[
+================================================================================
+Original Copyright ©2026 by Steven Guttag
+
+This User Component may be distributed freely.  Use at your own risk.
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+Any changes by others may be appended but under no circumstances may the
+original copyright be removed.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+================================================================================
+--]]
+-- DSS Server Plugin for Q-SYS
+-- Author: Steve Guttag
+-- Version: 1.0.0 (Build 46, internal: 1.0.0.46)
+
+PluginInfo = {
+  Name        = "DSS~Server v1.0.0",
+  Version     = "1.0.0",
+  BuildVersion= "1.0.0.46",
+  Id          = "d0b37040-dbe2-4ac1-9f43-80de7ef7e60b",
+  Author      = "Steve Guttag",
+  Description = "Monitor and control for Dolby DSS Cinema Servers.",
+  IsManaged   = true,
+  Manufacturer= "Dolby",
+  Model       = "DSS",
+}
+
+function GetColor(props)
+  return { 222, 80, 68 }
+end
+
+function GetPrettyName(props)
+  return "DSS Server v" .. PluginInfo.Version
+end
+
+pagenames = {}
+
+function GeneratePagenames(props)
+  pagenames = { "Setup", "Playback", "Content", "Ingest", "Control" }
+  return pagenames
+end
+
+function GetPages(props)
+  local pages = {}
+  for ix, name in ipairs(GeneratePagenames(props)) do
+    table.insert(pages, { name = pagenames[ix] })
+  end
+  return pages
+end
+
+function GetProperties()
+  local props = {}
+  table.insert(props, {
+    Name  = "Short Poll Rate",
+    Type  = "integer",
+    Min   = 1,
+    Max   = 30,
+    Value = 3,
+  })
+  table.insert(props, {
+    Name    = "CAT745 Mediablock",
+    Type    = "enum",
+    Choices = { "No", "Yes" },
+    Value   = "No",
+  })
+  table.insert(props, {
+    Name    = "Dolby Cinema Processor",
+    Type    = "enum",
+    Choices = { "No", "Yes" },
+    Value   = "No",
+  })
+  table.insert(props, {
+    Name    = "Stopped LED Behavior",
+    Type    = "enum",
+    Choices = { "Stopped only", "Not Playing or Paused" },
+    Value   = "Stopped only",
+  })
+  table.insert(props, {
+    Name  = "Debug Print",
+    Type  = "enum",
+    Choices = { "None", "Tx/Rx", "Tx", "Rx", "Function Calls", "All" },
+    Value = "None",
+  })
+  return props
+end
+
+function RectifyProperties(props)
+  if props.plugin_show_debug.Value == false then
+    props["Debug Print"].IsHidden = true
+  end
+  return props
+end
+
+function GetControls(props)
+  local controls = {}
+
+  -- Status indicator
+  table.insert(controls, {
+    Name          = "Status",
+    ControlType   = "Indicator",
+    IndicatorType = Reflect and "StatusGP" or "Status",
+    PinStyle      = "Output",
+    UserPin       = true,
+    Count         = 1,
+  })
+
+  -- Text inputs (writable)
+  for _, name in ipairs({ "IPAddress", "Username", "Password", "LoadSPLName", "LoadCPLName" }) do
+    table.insert(controls, {
+      Name        = name,
+      ControlType = "Text",
+      PinStyle    = "Both",
+      UserPin     = true,
+      Count       = 1,
+    })
+  end
+
+  -- Text output indicators
+  for _, name in ipairs({
+    -- Setup
+    "ServerModel", "ServerSerial", "ServerSoftware", "ServerLocation", "ServerTime",
+    -- Playback
+    "PlayerState",
+    "CurrentSPLName", "SPLPosition", "SPLRemaining", "SPLDuration",
+    "CurrentCPLName", "CurrentCPLId", "CurrentCPLType", "CPLPosition", "CPLRemaining", "CPLDuration",
+    -- Load status
+    "LoadStatus", "LoadError",
+    -- Content
+    "CPLInfoName", "CPLInfoType", "CPLInfoDuration", "CPLInfoUUID",
+  }) do
+    table.insert(controls, {
+      Name          = name,
+      ControlType   = "Indicator",
+      IndicatorType = "Text",
+      PinStyle      = "Output",
+      UserPin       = true,
+      Count         = 1,
+    })
+  end
+
+  -- LED indicators
+  for _, name in ipairs({
+    "Playing", "Paused", "Stopped", "Ready", "Selecting", "Seeking",
+    "LedUnavailable", "LedExtension", "LedUnselected", "LedRecovering",
+    "IngestActive",
+    "CPLInfoEncrypted", "CPLInfoPlayable",
+  }) do
+    table.insert(controls, {
+      Name          = name,
+      ControlType   = "Indicator",
+      IndicatorType = "Led",
+      PinStyle      = "Output",
+      UserPin       = true,
+      Count         = 1,
+    })
+  end
+
+  -- Progress knobs (percent)
+  for _, name in ipairs({ "SPLProgress", "CPLProgress", "IngestProgress" }) do
+    table.insert(controls, {
+      Name        = name,
+      ControlType = "Knob",
+      ControlUnit = "Percent",
+      PinStyle    = "Output",
+      UserPin     = true,
+      Min         = 0,
+      Max         = 100,
+      Count       = 1,
+    })
+  end
+
+  -- Position/duration knobs (seconds, float)
+  for _, name in ipairs({
+    "SPLPositionSec", "SPLDurationSec", "SPLRemainingSec",
+    "CPLPositionSec", "CPLDurationSec", "CPLRemainingSec",
+  }) do
+    table.insert(controls, {
+      Name        = name,
+      ControlType = "Knob",
+      ControlUnit = "Float",
+      PinStyle    = "Output",
+      UserPin     = true,
+      Min         = 0,
+      Max         = 86400,
+      Count       = 1,
+    })
+  end
+
+  -- Playback trigger buttons
+  for icon, name in pairs({
+    ["Play"]      = "Play",
+    ["Pause"]     = "Pause",
+    ["Stop"]      = "Stop",
+    ["Next"]      = "SkipForward",
+    ["Previous"]  = "SkipBack",
+  }) do
+    table.insert(controls, {
+      Name        = name,
+      ControlType = "Button",
+      ButtonType  = "Trigger",
+      PinStyle    = "Both",
+      UserPin     = true,
+      Count       = 1,
+      Icon        = type(icon) == "string" and icon or nil,
+    })
+  end
+
+  -- Eject trigger button
+  table.insert(controls, {
+    Name        = "Eject",
+    ControlType = "Button",
+    ButtonType  = "Trigger",
+    PinStyle    = "Both",
+    UserPin     = true,
+    Count       = 1,
+    Icon        = "Eject",
+  })
+
+  -- Load content buttons
+  for _, name in ipairs({ "LoadSPL", "LoadCPL" }) do
+    table.insert(controls, {
+      Name        = name,
+      ControlType = "Button",
+      ButtonType  = "Trigger",
+      PinStyle    = "Both",
+      UserPin     = true,
+      Count       = 1,
+    })
+  end
+
+  -- Schedule mode state-trigger buttons
+  for _, name in ipairs({ "ModeManual", "ModeScheduled" }) do
+    table.insert(controls, {
+      Name        = name,
+      ControlType = "Button",
+      ButtonType  = "StateTrigger",
+      PinStyle    = "Both",
+      UserPin     = true,
+      Min         = 0,
+      Max         = 1,
+      Count       = 1,
+    })
+  end
+
+  -- Control page: 2D/3D mode buttons (StateTrigger)
+  for _, name in ipairs({ "Mode2D", "Mode3D", "ModeDolby3D", "ModeRealD" }) do
+    table.insert(controls, {
+      Name        = name,
+      ControlType = "Button",
+      ButtonType  = "StateTrigger",
+      PinStyle    = "Both",
+      UserPin     = true,
+      Min=0, Max=1,
+      Count       = 1,
+    })
+  end
+
+  -- Control page: CAT745 detection LED (always defined; only in layout when property=Yes)
+  table.insert(controls, {
+    Name          = "LedCat745Detected",
+    ControlType   = "Indicator",
+    IndicatorType = "Led",
+    PinStyle      = "Output",
+    UserPin       = true,
+    Count         = 1,
+  })
+  -- Control page: Input Select buttons (CAT745, StateTrigger)
+  for _, name in ipairs({ "InputServer", "InputHDMI1", "InputHDMI2" }) do
+    table.insert(controls, {
+      Name        = name,
+      ControlType = "Button",
+      ButtonType  = "StateTrigger",
+      PinStyle    = "Both",
+      UserPin     = true,
+      Min=0, Max=1,
+      Count       = 1,
+    })
+  end
+
+  -- Control page: Audio
+  table.insert(controls, {
+    Name        = "AudioMute",
+    ControlType = "Button",
+    ButtonType  = "Toggle",
+    PinStyle    = "Both",
+    UserPin     = true,
+    Icon        = "Volume Strike",
+    Count       = 1,
+  })
+  table.insert(controls, {
+    Name        = "VolumeUp",
+    ControlType = "Button",
+    ButtonType  = "Trigger",
+    PinStyle    = "Both",
+    UserPin     = true,
+    Icon        = "Arrow Up",
+    Count       = 1,
+  })
+  table.insert(controls, {
+    Name        = "VolumeDown",
+    ControlType = "Button",
+    ButtonType  = "Trigger",
+    PinStyle    = "Both",
+    UserPin     = true,
+    Icon        = "Arrow Down",
+    Count       = 1,
+  })
+  table.insert(controls, {
+    Name        = "VolumeFader",
+    ControlType = "Knob",
+    ControlUnit = "Float",
+    PinStyle    = "Both",
+    UserPin     = true,
+    Min         = 0,
+    Max         = 10,
+    Count       = 1,
+  })
+  table.insert(controls, {
+    Name          = "VolumeLevel",
+    ControlType   = "Indicator",
+    IndicatorType = "Text",
+    PinStyle      = "Output",
+    UserPin       = true,
+    Count         = 1,
+  })
+
+  return controls
+end
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- Layout
+-- ───────────────────────────────────────────────────────────────────────────
+function GetControlLayout(props)
+  local layout   = {}
+  local graphics = {}
+  GeneratePagenames(props)
+  local CurrentPage = pagenames[props["page_index"].Value]
+
+  local black    = {  0,  0,  0 }
+  local white    = {255,255,255}
+  local grey     = {200,200,200}
+  local green    = {  0,210,  0}
+  local amber    = {255,200,  0}
+  local red      = {220,  0,  0}
+  local GBGray   = {224,224,224}
+  local BoldText = { 27, 33, 43}
+  local MainText = { 51, 51, 51}
+  local DGray    = {164,164,164}
+  local width    = 320
+  local y        = 66
+
+  -- ── SETUP ──────────────────────────────────────────────────────────────
+  if CurrentPage == "Setup" then
+    width = 340
+    table.insert(graphics, { Type="Label", Text="Setup", HTextAlign="Left",
+      FontStyle="Bold", FontColor=BoldText, FontSize=18,
+      Position={5,y}, Size={200,22} })
+    y = y + 22
+    table.insert(graphics, { Type="GroupBox", Position={5,y}, Size={width-10, 394} })
+    y = y + 6
+
+    table.insert(graphics, { Type="Header", Text="Connect to Device",
+      Position={15,y}, Size={width-30,18} })
+    y = y + 22
+
+    table.insert(graphics, { Type="Label", Text="IP Address:",
+      Position={10,y}, Size={120,18} })
+    layout["IPAddress"] = { PrettyName="Setup~IP Address",
+      Style="Text", Position={135,y}, Size={180,18} }
+    y = y + 24
+    y = y + 6
+
+    table.insert(graphics, { Type="Header", Text="Device Information",
+      Position={15,y}, Size={width-30,18} })
+    y = y + 22
+    for _, line in ipairs({
+      { name="ServerSerial",   pretty="Serial Number"  },
+      { name="ServerSoftware", pretty="Software"       },
+      { name="ServerTime",     pretty="Server Time"    },
+    }) do
+      table.insert(graphics, { Type="Label", Text=line.pretty..":",
+        Position={10,y}, Size={120,18} })
+      layout[line.name] = { PrettyName="Setup~"..line.pretty,
+        Style="Text", IsReadOnly=true, Position={135,y}, Size={180,18} }
+      y = y + 24
+    end
+    y = y + 6
+
+    table.insert(graphics, { Type="Header", Text="Connection Status",
+      Position={15,y}, Size={width-30,18} })
+    y = y + 22
+    layout["Status"] = { PrettyName="Setup~Status", Style="Text",
+      Position={30,y}, Size={width-60,24} }
+    y = y + 36
+
+    -- Credits and disclaimer
+    y = y + 8
+    table.insert(graphics, { Type="Header", Text="Credits",
+      Position={15,y}, Size={width-30,18} })
+    y = y + 22
+    -- STG logo: 22x50px, centred
+    table.insert(graphics, {
+      Type     = "Image",
+      Image    = "iVBORw0KGgoAAAANSUhEUgAAABYAAAAyCAYAAABYiSsbAAAD6klEQVR42rWYT4hVVRzHP/fNezOVjqhZmpJBimVF/8kWbqRFuCwjIhRC3LlsU7QqEoRoFQQuSimhCEoqiQjTNkVpDaSNUKbBIJPTPyimsnlz323zPY/v/Dj3vjdBBw7n3nt+53t+5/f/3ILBrQBaGgEqoKfxP7UWMNIwPyKaWm7qFpV6XgpsAtaJfho4B/yeoW1sictbgAPAlI7tfRo4CNxtDBbDgD4O/JUBjL0LPG+iK5pAHwgLK+AicBQ4ApzOzB82jCLKugCWAD9I6131J4FlgfY+4D2B/q1xX2AQgLbG3SKa07gznChayX6j7wF3RvD0cNRs9EN962Rk55u8b6J5w/EKezlnRLs1125QdAHcahz/CiwnGPgocKW9/2ib5Fqy3UngjDZZqY0WAM8Bs/a+dgj7TOvPAPPq1+RM7W2T8UcNMo6euwrYoL40ZxWPBqt4IhM72uotFhHBRoGvzfhL4GlgxQAFpvV97ysygede4BgwbotmgG8UeGaACeBjOdNQgaijcZdkPW9uG/ss8CqwPudxOQVuA74XB92GAFRqnAEejOCFKaanGHACuEoLR4BfdOxJ0dysQHWdNu7oZNslwr5YkuCXSWYV8I/GF4FrM6dbATwX4sRPwBpTYt/Ung2ge4OY2tZT2xnWHIgiWSIXLkN87dTYayHTBHhJa+al0NVOuM0UMgfcNEQyTUdeK8DE1GPu63foYws4C3xrG9W1nsZp4CutrYC7HPhqs5ApU+gwJUIBXDARrXLgMoTPasiCJNGNxcCUgC/axGYDLwYA90Rze108/cJKp/WWqZuU1xbNFtUg3VgEJe1OCLhUih+riceergrgU21wWePBGIsfCQTvxqAdNhgFXjfr6UZgF8k7mkxV0KSqIk83K4EdMrHkdb064GRe48BnwU0rZd8J4EvFhCpkmqoO2I85DryZCY9Vzbe3JLaUKw8NKmsfAj4JXDnw55YTX7a5Q2SKkcrS0RH1TXL5VB9fktVMGjNX5GzRTQ7jaETH+04918ZMeVngXmayzGxKoC+bvAfgHnPLKeB4uMj0FnuBced4Ss8n5aatIQJRZakqtcvuGKd1rHngBpncoCBUiKZjd5EKOO9EN1rlUwF7zG0H1SAPW2pKQWmBOx8zgkvA9QYQS6mOJYgLWlOq6uzfQ1Jo3Bpc+SxwWwPHG4BTIXDtCLrrg78QLiyzqi22qkBZDdyvi8xvgfZwrtQq7AivmZN4TPhDRWGVCTwfyFmydz1PoM8YJ34pj8+lTtQecIVecDXYrGLkfACr5ESvqOTN3suHuaSPARtVw7WAn7XZn0a7qN8M/8tvhZx4ilBLNHL4L7xEcV6DZqziAAAAAElFTkSuQmCC",
+      Position = {math.floor((width-22)/2), y},
+      Size     = {22, 50},
+    })
+    y = y + 58
+    table.insert(graphics, {
+      Type="Label", Text="Plugin Design and Copyright by: Steve Guttag ©2026",
+      HTextAlign="Center", VTextAlign="Center",
+      FontSize=9, FontColor=MainText, Font="Roboto",
+      Position={10,y}, Size={width-20,14} })
+    y = y + 16
+    table.insert(graphics, {
+      Type="Label", Text="Created with Claude AI",
+      HTextAlign="Center", VTextAlign="Center",
+      FontSize=9, FontColor=MainText, Font="Roboto",
+      Position={10,y}, Size={width-20,14} })
+    y = y + 20
+    table.insert(graphics, {
+      Type="Label",
+      Text="This plugin may be used and distributed freely. It is being",
+      HTextAlign="Center", VTextAlign="Center",
+      FontSize=8, FontColor=DGray, Font="Roboto",
+      Position={10,y}, Size={width-20,12} })
+    y = y + 12
+    table.insert(graphics, {
+      Type="Label",
+      Text="provided as-is with no expressed or implied warranties of",
+      HTextAlign="Center", VTextAlign="Center",
+      FontSize=8, FontColor=DGray, Font="Roboto",
+      Position={10,y}, Size={width-20,12} })
+    y = y + 12
+    table.insert(graphics, {
+      Type="Label",
+      Text="any kind. Use at your own risk.",
+      HTextAlign="Center", VTextAlign="Center",
+      FontSize=8, FontColor=DGray, Font="Roboto",
+      Position={10,y}, Size={width-20,12} })
+    y = y + 20
+
+  -- ── PLAYBACK ───────────────────────────────────────────────────────────
+  elseif CurrentPage == "Playback" then
+    width = 670
+    table.insert(graphics, { Type="Label", Text="Playback", HTextAlign="Left",
+      FontStyle="Bold", FontColor=BoldText, FontSize=18,
+      Position={5,y}, Size={200,22} })
+    y = y + 22
+    table.insert(graphics, { Type="GroupBox", Position={5,y}, Size={width-10, 648} })
+    y = y + 6
+
+    -- Playback Mode row (centered on page)
+    table.insert(graphics, { Type="Header", Text="Playback Mode",
+      Position={15,y}, Size={width-30,18} })
+    y = y + 22
+    table.insert(graphics, { Type="Label", Text="Manual:", Position={219,y}, Size={70,18} })
+    layout["ModeManual"] = { PrettyName="Playback~Manual Mode", Type="StateTrigger",
+      Position={292,y}, Size={36,18} }
+    table.insert(graphics, { Type="Label", Text="Scheduled:", Position={343,y}, Size={76,18} })
+    layout["ModeScheduled"] = { PrettyName="Playback~Scheduled Mode", Type="StateTrigger",
+      Position={422,y}, Size={36,18} }
+    y = y + 28
+
+    -- Current SPL section
+    table.insert(graphics, { Type="Header", Text="Show Playlist (SPL)",
+      Position={15,y}, Size={width-30,18} })
+    y = y + 22
+
+    table.insert(graphics, { Type="Label", Text="SPL Name:", Position={10,y}, Size={120,18} })
+    layout["CurrentSPLName"] = { PrettyName="Playback~SPL Name",
+      Style="Text", IsReadOnly=true, Position={133,y}, Size={525,18} }
+    y = y + 24
+
+    table.insert(graphics, { Type="Label", Text="SPL Progress:", Position={10,y}, Size={120,18} })
+    layout["SPLProgress"] = { PrettyName="Playback~SPL Progress",
+      Style="Text", TextBoxStyle="Meter", IsReadOnly=true,
+      Color=green, Position={133,y}, Size={525,18} }
+    y = y + 24
+
+    table.insert(graphics, { Type="Label", Text="SPL Position:", Position={10,y}, Size={120,18} })
+    layout["SPLPosition"] = { PrettyName="Playback~SPL Position",
+      Style="Text", IsReadOnly=true, Position={133,y}, Size={140,18} }
+    table.insert(graphics, { Type="Label", Text="Remaining:", Position={283,y}, Size={95,18} })
+    layout["SPLRemaining"] = { PrettyName="Playback~SPL Remaining",
+      Style="Text", IsReadOnly=true, Position={383,y}, Size={165,18} }
+    y = y + 24
+
+    table.insert(graphics, { Type="Label", Text="SPL Duration:", Position={10,y}, Size={120,18} })
+    layout["SPLDuration"] = { PrettyName="Playback~SPL Duration",
+      Style="Text", IsReadOnly=true, Position={133,y}, Size={140,18} }
+    y = y + 28
+
+    -- Player Status GroupBox: label left-aligned
+    table.insert(graphics, { Type="GroupBox", Text="Player Status",
+      Fill=GBGray, CornerRadius=0, StrokeWidth=1,
+      HTextAlign="Left",
+      Position={10,y}, Size={width-20, 84} })
+    y = y + 14
+    -- Row 1: Playing (C1) / Paused (C2) / Stopped (C3) / Seeking (C4)
+    -- C1=95, C2=260, C3=425, C4=545
+    table.insert(graphics, { Type="Label", Text="Playing:", Position={16,y}, Size={76,16}, HTextAlign="Right" })
+    layout["Playing"] = { PrettyName="Playback~Playing LED", Style="Led",
+      IsReadOnly=true, Color=green, Position={95,y+2}, Size={12,12} }
+    table.insert(graphics, { Type="Label", Text="Paused:", Position={176,y}, Size={81,16}, HTextAlign="Right" })
+    layout["Paused"] = { PrettyName="Playback~Paused LED", Style="Led",
+      IsReadOnly=true, Color=amber, Position={260,y+2}, Size={12,12} }
+    table.insert(graphics, { Type="Label", Text="Stopped:", Position={341,y}, Size={81,16}, HTextAlign="Right" })
+    layout["Stopped"] = { PrettyName="Playback~Stopped LED", Style="Led",
+      IsReadOnly=true, Color=red, Position={425,y+2}, Size={12,12} }
+    table.insert(graphics, { Type="Label", Text="Seeking:", Position={461,y}, Size={81,16}, HTextAlign="Right" })
+    layout["Seeking"] = { PrettyName="Playback~Seeking LED", Style="Led",
+      IsReadOnly=true, Color={255,255,0}, Position={545,y+2}, Size={12,12} }
+    y = y + 20
+    -- Row 2: Ready (C1) / Selecting (C2) / Busy (C3)
+    table.insert(graphics, { Type="Label", Text="Ready:", Position={16,y}, Size={76,16}, HTextAlign="Right" })
+    layout["Ready"] = { PrettyName="Playback~Ready LED", Style="Led",
+      IsReadOnly=true, Color={255,140,0}, Position={95,y+2}, Size={12,12} }
+    table.insert(graphics, { Type="Label", Text="Selecting:", Position={176,y}, Size={81,16}, HTextAlign="Right" })
+    layout["Selecting"] = { PrettyName="Playback~Selecting LED", Style="Led",
+      IsReadOnly=true, Color={255,255,0}, Position={260,y+2}, Size={12,12} }
+    table.insert(graphics, { Type="Label", Text="Busy:", Position={341,y}, Size={81,16}, HTextAlign="Right" })
+    layout["LedExtension"] = { PrettyName="Playback~Busy LED", Style="Led",
+      IsReadOnly=true, Color={255,200,0}, Position={425,y+2}, Size={12,12} }
+    y = y + 20
+    -- Row 3: Recovering (C1) / Unselected (C2) / Unavailable (C3)
+    table.insert(graphics, { Type="Label", Text="Recovering:", Position={16,y}, Size={76,16}, HTextAlign="Right" })
+    layout["LedRecovering"] = { PrettyName="Playback~Recovering LED", Style="Led",
+      IsReadOnly=true, Color={255,200,0}, Position={95,y+2}, Size={12,12} }
+    table.insert(graphics, { Type="Label", Text="Unselected:", Position={176,y}, Size={81,16}, HTextAlign="Right" })
+    layout["LedUnselected"] = { PrettyName="Playback~Unselected LED", Style="Led",
+      IsReadOnly=true, Color={200,200,200}, Position={260,y+2}, Size={12,12} }
+    table.insert(graphics, { Type="Label", Text="Unavailable:", Position={341,y}, Size={81,16}, HTextAlign="Right" })
+    layout["LedUnavailable"] = { PrettyName="Playback~Unavailable LED", Style="Led",
+      IsReadOnly=true, Color={220,0,0}, Position={425,y+2}, Size={12,12} }
+    y = y + 28
+
+    -- CPL section
+    table.insert(graphics, { Type="Header", Text="Composition Playlist (CPL / Clip)",
+      Position={15,y}, Size={width-30,18} })
+    y = y + 22
+
+    table.insert(graphics, { Type="Label", Text="CPL Name:", Position={10,y}, Size={120,18} })
+    layout["CurrentCPLName"] = { PrettyName="Playback~CPL Name",
+      Style="Text", IsReadOnly=true, Position={133,y}, Size={525,18} }
+    y = y + 24
+
+    table.insert(graphics, { Type="Label", Text="CPL UUID:", Position={10,y}, Size={120,18} })
+    layout["CurrentCPLId"] = { PrettyName="Playback~CPL UUID",
+      Style="Text", IsReadOnly=true, Position={133,y}, Size={525,18} }
+    y = y + 24
+
+    table.insert(graphics, { Type="Label", Text="CPL Progress:", Position={10,y}, Size={120,18} })
+    layout["CPLProgress"] = { PrettyName="Playback~CPL Progress",
+      Style="Text", TextBoxStyle="Meter", IsReadOnly=true,
+      Color=green, Position={133,y}, Size={525,18} }
+    y = y + 24
+
+    table.insert(graphics, { Type="Label", Text="CPL Type:", Position={10,y}, Size={120,18} })
+    layout["CurrentCPLType"] = { PrettyName="Playback~CPL Type",
+      Style="Text", IsReadOnly=true, Position={133,y}, Size={140,18} }
+    y = y + 24
+
+    table.insert(graphics, { Type="Label", Text="CPL Position:", Position={10,y}, Size={120,18} })
+    layout["CPLPosition"] = { PrettyName="Playback~CPL Position",
+      Style="Text", IsReadOnly=true, Position={133,y}, Size={140,18} }
+    table.insert(graphics, { Type="Label", Text="Remaining:", Position={283,y}, Size={95,18} })
+    layout["CPLRemaining"] = { PrettyName="Playback~CPL Remaining",
+      Style="Text", IsReadOnly=true, Position={383,y}, Size={165,18} }
+    y = y + 24
+
+    table.insert(graphics, { Type="Label", Text="CPL Duration:", Position={10,y}, Size={120,18} })
+    layout["CPLDuration"] = { PrettyName="Playback~CPL Duration",
+      Style="Text", IsReadOnly=true, Position={133,y}, Size={140,18} }
+    y = y + 28
+
+    -- Playback Controls — StateTrigger buttons use Color when Value=1, OffColor when Value=0
+    table.insert(graphics, { Type="Header", Text="Playback Controls",
+      Position={15,y}, Size={width-30,18} })
+    y = y + 22
+    local btnDefs = {
+      { name="SkipBack",    activeColor=nil   },
+      { name="Play",        activeColor={0,210,0}    },  -- bright green when playing
+      { name="Pause",       activeColor={255,200,0}  },  -- bright yellow when paused
+      { name="Stop",        activeColor={220,0,0}    },  -- bright red when stopped/ready
+      { name="Eject",       activeColor=nil   },
+      { name="SkipForward", activeColor=nil   },
+    }
+    local cx = math.floor(width/2) - (math.floor(#btnDefs/2)*50)
+    for i, bd in ipairs(btnDefs) do
+      local btn = { PrettyName="Playback~"..bd.name,
+        Style="Button", ButtonStyle="Trigger",
+        Position={cx + (i-1)*50, y}, Size={44,44} }
+      if bd.activeColor then
+        btn.ButtonStyle    = "StateTrigger"
+        btn.Color          = bd.activeColor
+      end
+      layout[bd.name] = btn
+    end
+    y = y + 52
+
+    -- Load Content
+    table.insert(graphics, { Type="Header", Text="Load Content",
+      Position={15,y}, Size={width-30,18} })
+    y = y + 22
+    table.insert(graphics, { Type="Label", Text="Select SPL:",
+      HTextAlign="Center", Position={100,y}, Size={width-200,18} })
+    y = y + 18
+    layout["LoadSPLName"] = { PrettyName="Playback~Load SPL Name",
+      Style="ComboBox", Position={20,y}, Size={width-90,18} }
+    table.insert(graphics, { Type="Label", Text="Load:", Position={width-66,y}, Size={36,18} })
+    layout["LoadSPL"] = { PrettyName="Playback~Load SPL",
+      Style="Button", Position={width-30,y}, Size={20,18} }
+    y = y + 28
+
+    table.insert(graphics, { Type="Label", Text="Select CPL / Clip:",
+      HTextAlign="Center", Position={100,y}, Size={width-200,18} })
+    y = y + 18
+    layout["LoadCPLName"] = { PrettyName="Playback~Load CPL Name",
+      Style="ComboBox", Position={20,y}, Size={width-90,18} }
+    table.insert(graphics, { Type="Label", Text="Load:", Position={width-66,y}, Size={36,18} })
+    layout["LoadCPL"] = { PrettyName="Playback~Load CPL",
+      Style="Button", Position={width-30,y}, Size={20,18} }
+    y = y + 28
+
+    table.insert(graphics, { Type="Label", Text="Load Status:", Position={10,y}, Size={110,18} })
+    layout["LoadStatus"] = { PrettyName="Playback~Load Status",
+      Style="Text", IsReadOnly=true, Position={125,y}, Size={150,18} }
+    table.insert(graphics, { Type="Label", Text="Error:", Position={285,y}, Size={50,18} })
+    layout["LoadError"] = { PrettyName="Playback~Load Error",
+      Style="Text", IsReadOnly=true, Position={340,y}, Size={115,18} }
+    y = y + 28
+
+    -- Pin-only (hidden) controls for integration
+    layout["SPLPositionSec"]  = { PrettyName="Playback~SPL Position (sec)",  Style="None" }
+    layout["SPLDurationSec"]  = { PrettyName="Playback~SPL Duration (sec)",  Style="None" }
+    layout["SPLRemainingSec"] = { PrettyName="Playback~SPL Remaining (sec)", Style="None" }
+    layout["CPLPositionSec"]  = { PrettyName="Playback~CPL Position (sec)",  Style="None" }
+    layout["CPLDurationSec"]  = { PrettyName="Playback~CPL Duration (sec)",  Style="None" }
+    layout["CPLRemainingSec"] = { PrettyName="Playback~CPL Remaining (sec)", Style="None" }
+
+  -- ── CONTENT ────────────────────────────────────────────────────────────
+  elseif CurrentPage == "Content" then
+    width = 460
+    table.insert(graphics, { Type="Label", Text="Content", HTextAlign="Left",
+      FontStyle="Bold", FontColor=BoldText, FontSize=18,
+      Position={5,y}, Size={200,22} })
+    y = y + 22
+    table.insert(graphics, { Type="GroupBox", Position={5,y}, Size={width-10, 500} })
+    y = y + 6
+
+    table.insert(graphics, { Type="Header", Text="Content List",
+      Position={15,y}, Size={width-30,18} })
+    y = y + 22
+    layout["LoadCPLName"] = { PrettyName="Content~Select Clip/CPL",
+      Style="ListBox", HTextAlign="Left", FontSize=12,
+      Position={20,y}, Size={width-40,200} }
+    y = y + 208
+
+    table.insert(graphics, { Type="Header", Text="Selected Content Info",
+      Position={15,y}, Size={width-30,18} })
+    y = y + 22
+    for _, line in ipairs({
+      { name="CPLInfoName",     pretty="Name"     },
+      { name="CPLInfoUUID",     pretty="UUID"     },
+      { name="CPLInfoType",     pretty="Type"     },
+      { name="CPLInfoDuration", pretty="Duration" },
+    }) do
+      table.insert(graphics, { Type="Label", Text=line.pretty..":",
+        Position={10,y}, Size={120,18} })
+      layout[line.name] = { PrettyName="Content~"..line.pretty,
+        Style="Text", IsReadOnly=true, Position={135,y}, Size={290,18} }
+      y = y + 24
+    end
+    -- Encrypted and Playable as LEDs
+    table.insert(graphics, { Type="Label", Text="Encrypted:",
+      Position={10,y}, Size={120,18} })
+    layout["CPLInfoEncrypted"] = { PrettyName="Content~Encrypted", Style="Led",
+      IsReadOnly=true, Color={220,0,0}, UnlinkOffColor=true, OffColor={180,180,180},
+      Position={138,y+3}, Size={12,12} }
+    table.insert(graphics, { Type="Label", Text="Playable:",
+      Position={175,y}, Size={80,18} })
+    layout["CPLInfoPlayable"] = { PrettyName="Content~Playable", Style="Led",
+      IsReadOnly=true, Color={0,210,0}, UnlinkOffColor=true, OffColor={180,180,180},
+      Position={258,y+3}, Size={12,12} }
+    y = y + 28
+
+  -- ── INGEST ─────────────────────────────────────────────────────────────
+  elseif CurrentPage == "Ingest" then
+    width = 440
+    table.insert(graphics, { Type="Label", Text="Ingest / Transfer", HTextAlign="Left",
+      FontStyle="Bold", FontColor=BoldText, FontSize=18,
+      Position={5,y}, Size={220,22} })
+    y = y + 22
+    table.insert(graphics, { Type="GroupBox", Position={5,y}, Size={width-10, 300} })
+    y = y + 6
+
+    table.insert(graphics, { Type="Header", Text="Active Transfers",
+      Position={15,y}, Size={width-30,18} })
+    y = y + 22
+
+    table.insert(graphics, { Type="Label", Text="Ingest Active:", Position={10,y}, Size={120,18} })
+    layout["IngestActive"] = { PrettyName="Ingest~Active LED", Style="Led",
+      UnlinkOffColor=true, Color=green, OffColor={100,0,0},
+      Position={135,y+3}, Size={12,12} }
+
+    y = y + 28
+
+    table.insert(graphics, { Type="Label", Text="Progress:", Position={10,y}, Size={120,18} })
+    layout["IngestProgress"] = { PrettyName="Ingest~Progress",
+      Style="Text", TextBoxStyle="Meter", IsReadOnly=true,
+      Color={154,154,201}, Position={135,y}, Size={280,18} }
+    y = y + 32
+
+  -- ── CONTROL ────────────────────────────────────────────────────────────
+  elseif CurrentPage == "Control" then
+    width = 400
+    local isCat745  = (props["CAT745 Mediablock"].Value == "Yes")
+    local hasDolby  = (props["Dolby Cinema Processor"].Value == "Yes")
+
+    table.insert(graphics, { Type="Label", Text="Control", HTextAlign="Left",
+      FontStyle="Bold", FontColor=BoldText, FontSize=18,
+      Position={5,y}, Size={200,22} })
+    y = y + 22
+
+    -- ── GroupBox 1: Playback Mode (2D/3D) ──────────────────────────────
+    table.insert(graphics, { Type="GroupBox", Position={5,y}, Size={width-10, isCat745 and 96 or 96} })
+    y = y + 6
+    table.insert(graphics, { Type="Header", Text="Playback Mode (2D/3D)",
+      Position={15,y}, Size={width-30,18} })
+    y = y + 22
+    -- Render 3 or 4 mode buttons based on CAT745 Mediablock property
+    local modes = {
+      {name="Mode2D",      label="2D"},
+      {name="Mode3D",      label="3D"},
+      {name="ModeDolby3D", label="Dolby 3D"},
+    }
+    if isCat745 then table.insert(modes, {name="ModeRealD", label="Real-D"}) end
+    local modeCount = #modes
+    local modeW = math.floor((width - 30 - (modeCount-1)*6) / modeCount)
+    local modeGap, modeStart = 6, 15
+    for i, m in ipairs(modes) do
+      local mx = modeStart + (i-1)*(modeW+modeGap)
+      table.insert(graphics, { Type="Label", Text=m.label,
+        HTextAlign="Center", Position={mx,y}, Size={modeW,14} })
+      layout[m.name] = { PrettyName="Control~"..m.label.." Mode",
+        Style="Button", ButtonStyle="StateTrigger", Color={0,160,255},
+        Position={mx + math.floor((modeW-36)/2), y+16}, Size={36,36} }
+    end
+    y = y + 60
+
+    -- ── GroupBox 2: Audio (Dolby Cinema Processor only) ─────────────────
+    if hasDolby then
+      table.insert(graphics, { Type="GroupBox", Position={5,y}, Size={width-10, 126} })
+      y = y + 6
+      table.insert(graphics, { Type="Header", Text="Audio",
+        Position={15,y}, Size={width-30,18} })
+      y = y + 22
+
+      -- Row 1: Mute label | Mute btn | Volume label | Volume level text
+      table.insert(graphics, { Type="Label", Text="Mute:", HTextAlign="Right",
+        Position={10,y+2}, Size={50,32} })
+      layout["AudioMute"] = { PrettyName="Control~Mute", Style="Button",
+        ButtonStyle="Toggle", Color={220,0,0},
+        UnlinkOffColor=true, OffColor={180,180,180},
+        CornerRadius=18, Position={65,y}, Size={36,36} }
+      table.insert(graphics, { Type="Label", Text="Volume:", HTextAlign="Right",
+        Position={110,y+2}, Size={60,18} })
+      layout["VolumeLevel"] = { PrettyName="Control~Volume Level",
+        Style="Text", IsReadOnly=true, Position={174,y}, Size={60,18} }
+      -- Up/Down: Up above Down, same row right of level display, 36x36
+      layout["VolumeUp"] = { PrettyName="Control~Volume Up",
+        Style="Button", ButtonStyle="Trigger", Icon="Arrow Up",
+        Position={246,y}, Size={36,36} }
+      layout["VolumeDown"] = { PrettyName="Control~Volume Down",
+        Style="Button", ButtonStyle="Trigger", Icon="Arrow Down",
+        Position={246,y+36+4}, Size={36,36} }
+      y = y + 40
+
+      -- Row 2: Fader label | Fader (stop before the Up/Down buttons, which end at x=246+36=282)
+      table.insert(graphics, { Type="Label", Text="Fader:", HTextAlign="Right",
+        Position={10,y+4}, Size={50,22} })
+      layout["VolumeFader"] = { PrettyName="Control~Volume Fader",
+        Style="Fader", ControlUnit="Float", Min=0, Max=10,
+        Color={154,154,201},
+        Position={65,y}, Size={174,30} }
+      y = y + 40
+    end
+
+    -- ── GroupBox 3: Input Select (only rendered for CAT745) ─────────────────
+    if isCat745 then
+      table.insert(graphics, { Type="GroupBox", Position={5,y}, Size={width-10, 112} })
+      y = y + 6
+      table.insert(graphics, { Type="Header", Text="Input Select",
+        Position={15,y}, Size={width-30,18} })
+      y = y + 22
+      local inputs = {
+        {name="InputServer", label="Server"},
+        {name="InputHDMI1",  label="HDMI 1"},
+        {name="InputHDMI2",  label="HDMI 2"},
+      }
+      local inpW = math.floor((width - 30 - 2*8) / 3)
+      for i, inp in ipairs(inputs) do
+        local ix = 15 + (i-1)*(inpW+8)
+        table.insert(graphics, { Type="Label", Text=inp.label,
+          HTextAlign="Center", Position={ix,y}, Size={inpW,14} })
+        layout[inp.name] = { PrettyName="Control~Input "..inp.label,
+          Style="Button", ButtonStyle="StateTrigger", Color={255,140,0},
+          Position={ix + math.floor((inpW-36)/2), y+16}, Size={36,36} }
+      end
+      y = y + 56
+      -- CAT745 Detected: text left, LED one-char to the right — at bottom of GroupBox (+10px)
+      table.insert(graphics, { Type="Label", Text="CAT745 Detected",
+        HTextAlign="Left", Position={14,y+10}, Size={106,16} })
+      layout["LedCat745Detected"] = { PrettyName="Control~CAT745 Detected",
+        Style="Led", IsReadOnly=true, Color={0,210,0},
+        Position={124,y+12}, Size={12,12} }
+      y = y + 34
+    end
+  end  -- end Ingest/Control if-chain
+
+  -- ── HEADER inserted AFTER the defaultStyle loop so its FontColor=white
+  --    is never touched by the loop at all ───────────────────────────────────
+  -- (header elements appended below, after the defaultStyle section)
+
+  -- Apply default styles to everything collected so far (excludes header)
+  local defaultStyle = {
+    Label   = { FontSize=12, Font="Roboto", FontColor=MainText,
+                HTextAlign="Right", VTextAlign="Center" },
+    GroupBox= { Fill=GBGray, CornerRadius=0, StrokeWidth=0 },
+    Header  = { FontSize=12, Font="Roboto", FontColor=MainText,
+                HTextAlign="Center", VTextAlign="Center" },
+    Text    = { FontSize=12, HTextAlign="Center" },
+    ComboBox= { FontSize=12, HTextAlign="Center" },
+    ListBox = { FontSize=12, FontColor=MainText, Font="Roboto", HTextAlign="Left" },
+    Led     = { Margin=0, Size={12,12} },
+    Button  = { ButtonStyle="Trigger", Size={44,44}, Margin=2, CornerRadius=22 },
+  }
+  for _, g in pairs(graphics) do
+    for k,v in pairs(defaultStyle[g.Type] or {}) do
+      g[k] = g[k] or v
+    end
+  end
+  for ctrlName, ctrl in pairs(layout) do
+    if ctrlName ~= "Status" then
+      for k,v in pairs(defaultStyle[ctrl.Style] or {}) do
+        ctrl[k] = ctrl[k] or v
+      end
+    end
+  end
+
+  -- Now append header graphics — all fields fully explicit, never touched by
+  -- the defaultStyle loop above, so FontColor white is guaranteed.
+  -- Logo on Setup only; text label on other pages
+  if CurrentPage == "Setup" then
+    table.insert(graphics, {
+      Type     = "Image",
+      Image    = "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",
+      Position = {0, 0},
+      Size     = {width, 60},
+    })
+  else
+    table.insert(graphics, {
+      Type       = "Label",
+      Text       = "DSS Server",
+      HTextAlign = "Center",
+      VTextAlign = "Center",
+      FontStyle  = "Bold",
+      FontColor  = {255,255,255},
+      FontSize   = 22,
+      Font       = "Roboto",
+      Position   = {0, 8},
+      Size       = {width, 44},
+    })
+  end
+  -- Version number on Setup page only
+  if CurrentPage == "Setup" then
+    table.insert(graphics, {
+      Type       = "Label",
+      Text       = string.format("v%s", PluginInfo.BuildVersion),
+      FontSize   = 9,
+      FontColor  = {200,200,200},
+      Font       = "Roboto",
+      HTextAlign = "Right",
+      VTextAlign = "Center",
+      Position   = {width-82, y+4},
+      Size       = {78, 10},
+    })
+  end
+
+  return layout, graphics
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- RUNTIME LOGIC
+-- ═══════════════════════════════════════════════════════════════════════════
+if Controls then
+
+  -- ── Imports ──────────────────────────────────────────────────────────────
+  luaXML = require("LuaXML")
+  json   = require("rapidjson")
+
+  -- ── Control aliases ───────────────────────────────────────────────────────
+  local Status        = Controls.Status
+  local IPAddress     = Controls.IPAddress
+  local Username      = Controls.Username
+  local Password      = Controls.Password
+  local ModeManual    = Controls.ModeManual
+  local ModeScheduled = Controls.ModeScheduled
+  local Play          = Controls.Play
+  local Pause         = Controls.Pause
+  local Stop          = Controls.Stop
+  local SkipForward   = Controls.SkipForward
+  local SkipBack      = Controls.SkipBack
+  local LoadSPL       = Controls.LoadSPL
+  local LoadSPLName   = Controls.LoadSPLName
+  local LoadCPL       = Controls.LoadCPL
+  local LoadCPLName   = Controls.LoadCPLName
+
+  -- ── Debug flags ───────────────────────────────────────────────────────────
+  local DebugTx, DebugRx, DebugFunction = false, false, false
+  local DebugPrint = Properties["Debug Print"].Value
+
+  local function SetupDebugPrint()
+    if DebugPrint == "Tx/Rx" then DebugTx, DebugRx = true, true
+    elseif DebugPrint == "Tx"  then DebugTx = true
+    elseif DebugPrint == "Rx"  then DebugRx = true
+    elseif DebugPrint == "Function Calls" then DebugFunction = true
+    elseif DebugPrint == "All" then DebugTx, DebugRx, DebugFunction = true, true, true
+    end
+  end
+
+  -- ── Constants / state ─────────────────────────────────────────────────────
+  local StatusState = { OK=0, COMPROMISED=1, FAULT=2, NOTPRESENT=3, MISSING=4, INITIALIZING=5 }
+
+  -- DSS uses SOAP over HTTP on port 8080
+  -- Endpoints: /dcinema/ws/smi/v1/PlaybackControlService
+  --            /dcinema/ws/smi/v1/ContentManagementService
+  --            /dcinema/ws/smi/v1/ShowManagementService
+  --            /dcinema/ws/smi/v1/SystemManagementService
+  --            /dcinema/ws/smi/v1/TransferManagementService
+  local Api = {
+    Port         = 8080,
+    Timeout      = 10,
+    RetryTime    = 15,
+    ShortPoll    = Properties["Short Poll Rate"].Value,  -- used when stopped/paused or near end
+    LongPoll     = 15,          -- fixed 15-second interval while playing with plenty of time left
+    NearEndThresh= 30,          -- switch to short poll within 30 sec of end
+    -- WSDL definitions targetNamespace (used in SOAPAction header URI)
+    NS           = "http://www.dolby.com/dcinema/ws/smi/v1",
+    -- Versioned schema namespace where request/response elements are declared
+    -- (document/literal: body child element must carry THIS namespace, not NS)
+    NS_V1_0      = "http://www.dolby.com/dcinema/ws/smi/v1_0",
+    PlaybackSvc  = "/dcinema/ws/smi/v1/PlaybackControlService",
+    ContentSvc   = "/dcinema/ws/smi/v1/ContentManagementService",
+    ShowSvc      = "/dcinema/ws/smi/v1/ShowManagementService",
+    SystemSvc    = "/dcinema/ws/smi/v1/SystemManagementService",
+    TransferSvc  = "/dcinema/ws/smi/v1/TransferManagementService",
+    PollTimer    = Timer.New(),
+    RetryTimer   = Timer.New(),
+    TickTimer    = Timer.New(),  -- free-running 1-second timer for smooth progress
+    IngestTimer  = Timer.New(),  -- dedicated 5-second ingest poll when transfer active
+    LoadClearTimer = Timer.New(), -- auto-clear Load Status after 30s
+    ControlTimer   = Timer.New(), -- 3-second volume/mute/mode poll
+    PollCount    = 0,
+  }
+
+  -- Playback state
+  local State = {
+    TransportState = "",   -- PLAYING, STOPPED, PAUSED, READY, etc.
+    ScheduleMode   = "",   -- FULL_AUTOMATIC, SELECT_AUTOMATIC, MANUAL
+    ContentId      = "",
+    ContentType    = "",   -- CLIP or SHOW
+    CurrentClipId  = "",
+    ClipPosition   = 0,    -- seconds
+    ClipDuration   = 0,
+    ShowPosition   = 0,
+    ShowDuration   = 0,
+    SPLName        = "",
+    CPLName        = "",
+    CPLType        = "",
+    LastUpdate     = 0,    -- os.time() of last authoritative server response
+  }
+
+  local Clips  = {}   -- [clipId] = { name, type, duration, encrypted, playable }
+  local Shows  = {}   -- [showId] = { name, duration }
+  local Transfers = {}
+  local UnknownClipsAttempted = {}  -- tracks getCPL lookups so we don't repeat them
+  local GetSingleClip  -- forward declaration; defined in API helpers section below
+
+  -- Control page state — declared here so all parsers can reference them safely
+  local CtrlState = {
+    PlaybackMode = "TWO_D",
+    InputMode    = "SERVER",
+    Muted        = false,
+    Volume       = 0.0,
+  }
+  local isCat745 = (Properties["CAT745 Mediablock"].Value == "Yes")
+  local hasDolby = (Properties["Dolby Cinema Processor"].Value == "Yes")
+  local RefreshControlUI = function() end  -- stub; replaced in Control section
+  local GetControlState  = function() end  -- stub; replaced in Control section
+  local GetInputSelectOnce = function() end -- stub; replaced in Control section
+
+  -- ── Helper: strip urn:uuid: prefix from UUIDs ─────────────────────────────
+  local function NormUUID(s)
+    if type(s) ~= "string" then return s end
+    return s:match("^urn:uuid:(.+)$") or s
+  end
+
+  -- ── Helper: ISO duration PT#H#M#S.## → seconds ────────────────────────────
+  local function IsoDurationToSec(dur)
+    if type(dur) ~= "string" then return 0 end
+    local h = dur:match("(%d+)H") or "0"
+    local m = dur:match("(%d+)M") or "0"
+    local s = dur:match("([%d%.]+)S") or "0"
+    return tonumber(h)*3600 + tonumber(m)*60 + tonumber(s)
+  end
+
+  -- ── Helper: seconds → hh:mm:ss ────────────────────────────────────────────
+  local function FmtTime(sec)
+    sec = math.max(0, math.floor(tonumber(sec) or 0))
+    return string.format("%02d:%02d:%02d", math.floor(sec/3600), math.floor((sec%3600)/60), sec%60)
+  end
+
+  -- ── Helper: seconds → -hh:mm:ss ───────────────────────────────────────────
+  local function FmtRemaining(sec)
+    sec = math.max(0, math.floor(tonumber(sec) or 0))
+    return string.format("-%02d:%02d:%02d", math.floor(sec/3600), math.floor((sec%3600)/60), sec%60)
+  end
+
+  -- ── Status reporting ──────────────────────────────────────────────────────
+  local function ReportStatus(state, msg)
+    Status.Value  = StatusState[state] or 0
+    Status.String = msg or ""
+  end
+
+  -- ── Update all UI controls from State ────────────────────────────────────
+  local function RefreshUI()
+    local ts = State.TransportState
+    Controls.PlayerState.String = ts
+
+    local isPlaying   = (ts == "PLAYING")
+    local isPaused    = (ts == "PAUSED")
+    local isReady     = (ts == "READY")
+    local isSelecting = (ts == "SELECTING")
+    local isSeeking   = (ts == "SEEKING")
+    local isStopped
+    if Properties["Stopped LED Behavior"].Value == "Not Playing or Paused" then
+      isStopped = not isPlaying and not isPaused
+    else
+      isStopped = (ts == "STOPPED" or ts == "UNSELECTED" or ts == "")
+    end
+
+    Controls.Playing.Boolean   = isPlaying
+    Controls.Paused.Boolean    = isPaused
+    Controls.Stopped.Boolean   = isStopped
+    Controls.Ready.Boolean     = isReady
+    Controls.Selecting.Boolean = isSelecting
+    Controls.Seeking.Boolean   = isSeeking
+    Controls.LedUnavailable.Boolean = (ts == "UNAVAILABLE")
+    Controls.LedExtension.Boolean   = (ts == "EXTENSION" or ts == "PREP_SUITE" or ts == "PURGE_SUITE")  -- "Busy"
+    Controls.LedUnselected.Boolean  = (ts == "UNSELECTED")
+    Controls.LedRecovering.Boolean  = (ts == "RECOVERING")
+
+    -- StateTrigger buttons: lit when in that state
+    Controls.Play.Value  = isPlaying and 1 or 0
+    Controls.Pause.Value = isPaused  and 1 or 0
+    -- Stop button lit for all non-active states (stopped, ready, unselected)
+    Controls.Stop.Value  = (isStopped or isReady) and 1 or 0
+
+    -- Mode LEDs
+    local sm = State.ScheduleMode
+    ModeManual.Value    = (sm == "MANUAL" and 1 or 0)
+    ModeScheduled.Value = ((sm == "FULL_AUTOMATIC" or sm == "SELECT_AUTOMATIC") and 1 or 0)
+
+    -- SPL
+    Controls.CurrentSPLName.String = State.SPLName
+    local splPos = State.ShowPosition
+    local splDur = State.ShowDuration
+    local splRem = math.max(0, splDur - splPos)
+    Controls.SPLPosition.String   = FmtTime(splPos)
+    Controls.SPLRemaining.String  = FmtRemaining(splRem)
+    Controls.SPLDuration.String   = FmtTime(splDur)
+    Controls.SPLPositionSec.Value  = splPos
+    Controls.SPLDurationSec.Value  = splDur
+    Controls.SPLRemainingSec.Value = splRem
+    Controls.SPLProgress.Value = splDur > 0 and (100 * splPos / splDur) or 0
+
+    -- CPL
+    Controls.CurrentCPLName.String = State.CPLName
+    Controls.CurrentCPLId.String   = State.CurrentClipId
+    Controls.CurrentCPLType.String = State.CPLType
+    local cplPos = State.ClipPosition
+    local cplDur = State.ClipDuration
+    local cplRem = math.max(0, cplDur - cplPos)
+    Controls.CPLPosition.String   = FmtTime(cplPos)
+    Controls.CPLRemaining.String  = FmtRemaining(cplRem)
+    Controls.CPLDuration.String   = FmtTime(cplDur)
+    Controls.CPLPositionSec.Value  = cplPos
+    Controls.CPLDurationSec.Value  = cplDur
+    Controls.CPLRemainingSec.Value = cplRem
+    Controls.CPLProgress.Value = cplDur > 0 and (100 * cplPos / cplDur) or 0
+    -- Update Load button visibility when schedule mode changes
+    local isScheduled = (State.ScheduleMode ~= "MANUAL" and State.ScheduleMode ~= "")
+    Controls.LoadSPL.IsInvisible = isScheduled
+    Controls.LoadCPL.IsInvisible = isScheduled
+  end
+
+  -- ── Free-running 1-second tick timer ─────────────────────────────────────
+  -- Interpolates position between polls so progress bars don't appear sluggish
+  Api.TickTimer.EventHandler = function()
+    if State.TransportState == "PLAYING" and State.LastUpdate > 0 then
+      local elapsed = os.time() - State.LastUpdate
+      State.ShowPosition = math.min(State.ShowDuration, State.ShowPosition + 1)
+      State.ClipPosition = math.min(State.ClipDuration, State.ClipPosition + 1)
+      RefreshUI()
+    end
+  end
+
+  -- ── Determine current poll interval ──────────────────────────────────────
+  local function GetPollInterval()
+    if State.TransportState ~= "PLAYING" then
+      return Api.ShortPoll
+    end
+    -- Use CPL (clip) remaining for near-end threshold — clip transitions
+    -- happen at clip boundaries, so fast polling on CPL end catches the change quickly
+    local cplRemaining = math.max(0, State.ClipDuration - State.ClipPosition)
+    if cplRemaining <= Api.NearEndThresh then
+      return Api.ShortPoll
+    end
+    return Api.LongPoll
+  end
+
+  -- ── SOAP envelope builder ─────────────────────────────────────────────────
+  -- DSS uses document/literal binding. The body child element lives in the
+  -- versioned namespace http://www.dolby.com/dcinema/ws/smi/v1_0 (NS_V1_0),
+  -- NOT the definitions targetNamespace (v1). This was the primary connect bug.
+  local function BuildSoap(elementName, bodyContent)
+    return string.format(
+      '<?xml version="1.0" encoding="UTF-8"?>'..
+      '<soapenv:Envelope'..
+      ' xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"'..
+      ' xmlns:v1="%s">'..
+      '<soapenv:Body>%s</soapenv:Body>'..
+      '</soapenv:Envelope>',
+      Api.NS_V1_0, bodyContent
+    )
+  end
+
+  -- ── HTTP send ─────────────────────────────────────────────────────────────
+  -- soapAction  : bare operation name, e.g. "getPlaybackState"
+  -- bodyXml     : the literal XML body content, using v1: prefix for elements
+  -- handler     : response callback (nil = DefaultResponseHandler)
+  local function DefaultResponseHandler(tbl, code, data, err, headers)
+    if DebugRx then print("Rx:", code, tbl.Url, data) end
+    if code >= 200 and code < 300 then
+      ReportStatus("OK")
+    elseif code == 0 then
+      Disconnect("No response / connection refused")
+    elseif code >= 400 then
+      ReportStatus("FAULT", string.format("HTTP %d %s", code, err or ""))
+    end
+  end
+
+  local function Send(path, soapAction, bodyXml, handler)
+    if DebugFunction then print("Send() "..soapAction) end
+    local url = string.format("http://%s:%d%s", IPAddress.String, Api.Port, path)
+    local envelope = BuildSoap(soapAction, bodyXml)
+    if DebugTx then print("Tx:", url, "\n", envelope) end
+    HttpClient.Post({
+      Url     = url,
+      Timeout = Api.Timeout,
+      Headers = {
+        ["Content-Type"] = "text/xml; charset=utf-8",
+        -- SOAPAction header: quoted URI matching the binding definition
+        ["SOAPAction"]   = '"'..Api.NS.."/"..soapAction..'"',
+      },
+      Data         = envelope,
+      EventHandler = handler or DefaultResponseHandler,
+    })
+  end
+
+  -- ── XML helpers ───────────────────────────────────────────────────────────
+  -- LuaXML's :find() searches recursively by EXACT tag name (incl. prefix).
+  -- DSS responses use namespace-prefixed tags (e.g. "ns2:transportState").
+  -- FindTag() tries the bare name first via :find(), then walks the tree
+  -- stripping prefixes so we never need to know the server's prefix choices.
+
+  local function FindTag(node, localName)
+    -- First try luaXML's built-in recursive find (works for unprefixed tags)
+    local result = node:find(localName)
+    if result then return result end
+    -- Recursive walk matching on local name (after colon)
+    local function Walk(n)
+      if type(n) ~= "table" then return nil end
+      for i = 1, #n do
+        local child = n[i]
+        if type(child) == "table" then
+          local tag = (child[0] or ""):match("[^:]+$") or ""
+          if tag:lower() == localName:lower() then return child end
+          local found = Walk(child)
+          if found then return found end
+        end
+      end
+      return nil
+    end
+    return Walk(node)
+  end
+
+  -- Return the text value of the first matching child tag (recursive)
+  local function GetText(node, localName)
+    local n = FindTag(node, localName)
+    if n then return n[1] end
+    return nil
+  end
+
+  -- Helper matching IMS3000's Check() pattern
+  local function Check(node, fallback)
+    if node then return node[1] or fallback end
+    return fallback
+  end
+
+  -- ── Disconnect / reconnect ────────────────────────────────────────────────
+  local function Disconnect(msg)
+    if DebugFunction then print("Disconnect()") end
+    Api.PollTimer:Stop()
+    Api.TickTimer:Stop()
+    Api.IngestTimer:Stop()
+    Api.ControlTimer:Stop()
+    ReportStatus("MISSING", msg or "Disconnected")
+    Api.RetryTimer:Start(Api.RetryTime)
+  end
+
+  local function ClearState()
+    State.TransportState = ""
+    State.ScheduleMode   = ""
+    State.ContentId      = ""
+    State.ContentType    = ""
+    State.CurrentClipId  = ""
+    State.ClipPosition   = 0
+    State.ClipDuration   = 0
+    State.ShowPosition   = 0
+    State.ShowDuration   = 0
+    State.SPLName        = ""
+    State.CPLName        = ""
+    State.CPLType        = ""
+    State.AudioFormat    = ""
+    State.AudioChannels  = ""
+    State.LastUpdate     = 0
+    Clips  = {}
+    Shows  = {}
+    Transfers = {}
+    UnknownClipsAttempted = {}
+    LastClipInfosLen = 0
+    LastShowInfosLen = 0
+    ContentListLastTime = 0
+    LoadSPLName.Choices = {}
+    LoadCPLName.Choices = {}
+    Controls.ServerModel.String    = ""
+    Controls.ServerSerial.String   = ""
+    Controls.ServerSoftware.String = ""
+    Controls.ServerLocation.String = ""
+    Controls.ServerTime.String     = ""
+    Controls.IngestActive.Boolean  = false
+    Controls.IngestProgress.Value  = 0
+    if isCat745 then
+      Controls.LedCat745Detected.Boolean = false
+      Controls.InputServer.IsDisabled = false
+      Controls.InputHDMI1.IsDisabled  = false
+      Controls.InputHDMI2.IsDisabled  = false
+      Controls.ModeRealD.IsDisabled   = false
+    end
+    Controls.LoadStatus.String     = ""
+    Controls.LoadError.String      = ""
+    Controls.CurrentCPLId.String   = ""
+    Controls.CPLInfoName.String    = ""
+    Controls.CPLInfoUUID.String    = ""
+    Controls.CPLInfoType.String    = ""
+    Controls.CPLInfoDuration.String= ""
+    Controls.CPLInfoEncrypted.Boolean = false
+    Controls.CPLInfoPlayable.Boolean  = false
+    RefreshUI()
+  end
+
+  -- ── Parse getPlaybackState response ──────────────────────────────────────
+  -- v1_0 response: transportState (required), contentPlaybackState (optional)
+  local function ParsePlaybackState(tbl, code, data, err, headers)
+    if DebugRx then print("Rx PlaybackState:", code, data) end
+    if code < 200 or code >= 300 then
+      if code == 0 then Disconnect("Connection failed") end
+      return
+    end
+    ReportStatus("OK")
+
+    local ok, xml = pcall(luaXML.eval, data)
+    if not ok then
+      if DebugRx then print("ParsePlaybackState XML error:", xml) end
+      return
+    end
+
+    -- transportState/transportStateType (simpleContent complex type — read [1] directly)
+    local tsNode = FindTag(xml, "transportState")
+    if tsNode then
+      local tsType = FindTag(tsNode, "transportStateType")
+      if tsType then
+        -- Check for EXTENSION attribute (PREP_SUITE, PURGE_SUITE passed this way)
+        local ext = tsType["extension"]
+        local val = (tsType[1] or ""):upper()
+        if val == "EXTENSION" and ext and ext ~= "" then
+          State.TransportState = ext:upper()
+        else
+          State.TransportState = val
+        end
+      end
+    end
+
+    -- playbackMode is an XML attribute on the response element (e.g. playbackMode="TWO_D")
+    local function FindAttr(node, attrName)
+      if type(node) ~= "table" then return nil end
+      if node[attrName] then return node[attrName] end
+      for i = 1, #node do
+        local result = FindAttr(node[i], attrName)
+        if result then return result end
+      end
+    end
+    local pm = FindAttr(xml, "playbackMode")
+    if pm and pm ~= "" then
+      CtrlState.PlaybackMode = pm
+      -- Update mode buttons without a full RefreshControlUI (avoids cross-section deps)
+      Controls.Mode2D.Value      = (pm == "TWO_D"    and 1 or 0)
+      Controls.Mode3D.Value      = (pm == "THREE_D"  and 1 or 0)
+      Controls.ModeDolby3D.Value = (pm == "DOLBY_3D" and 1 or 0)
+      Controls.ModeRealD.Value   = (pm == "REAL_D"   and 1 or 0)
+    end
+
+    -- contentPlaybackState (absent when no content selected)
+    local cps = FindTag(xml, "contentPlaybackState")
+    if cps then
+      State.ContentId     = NormUUID(GetText(cps, "contentId"))     or ""
+      State.ContentType   = GetText(cps, "contentType")   or ""
+      State.CurrentClipId = NormUUID(GetText(cps, "currentClipId")) or ""
+
+      State.ClipPosition = IsoDurationToSec(GetText(cps, "clipPosition"))
+      State.ClipDuration = IsoDurationToSec(GetText(cps, "clipDuration"))
+      State.ShowPosition = IsoDurationToSec(GetText(cps, "showPosition"))
+      State.ShowDuration = IsoDurationToSec(GetText(cps, "showDuration"))
+
+      -- CLIP content: mirror clip values into show fields
+      if State.ContentType == "CLIP" or State.ShowDuration == 0 then
+        State.ShowPosition = State.ClipPosition
+        State.ShowDuration = State.ClipDuration
+      end
+
+      -- Name / type lookup from cache
+      if Clips[State.CurrentClipId] then
+        local c = Clips[State.CurrentClipId]
+        State.CPLName       = c.name         or ""
+        State.CPLType       = c.clipType      or ""
+      elseif State.CurrentClipId ~= "" then
+        -- Clip not in cache — could be a VF or lamp cue not returned by getClipInfos.
+        -- Only attempt the getCPL lookup once per unique unknown clip ID.
+        if not UnknownClipsAttempted[State.CurrentClipId] then
+          UnknownClipsAttempted[State.CurrentClipId] = true
+          local shortId = State.CurrentClipId:sub(1, 8) .. "…"
+          if State.CPLName == "" or State.CPLName:sub(-1) ~= "…" then
+            State.CPLName = shortId
+          end
+          Timer.CallAfter(function() GetSingleClip(State.CurrentClipId) end, 0.1)
+        end
+      end
+
+      if State.ContentType == "SHOW" and Shows[State.ContentId] then
+        State.SPLName = Shows[State.ContentId].name or ""
+      elseif State.ContentType == "CLIP" then
+        State.SPLName = ""
+      end
+    else
+      State.ContentId     = ""
+      State.ClipPosition  = 0
+      State.ClipDuration  = 0
+      State.ShowPosition  = 0
+      State.ShowDuration  = 0
+      State.CPLName       = ""
+      State.SPLName       = ""
+      State.CPLType       = ""
+    end
+
+    State.LastUpdate = os.time()
+    RefreshUI()
+
+    -- Smart clear of Load Status when content matches
+    local ls = Controls.LoadStatus.String
+    if ls == "Loading SPL…" then
+      if State.SPLName ~= "" and LoadSPLName.String:find(State.SPLName, 1, true) then
+        Controls.LoadStatus.String = ""
+        Api.LoadClearTimer:Stop()
+      end
+    elseif ls == "Loading CPL…" then
+      if State.CPLName ~= "" and LoadCPLName.String:find(State.CPLName, 1, true) then
+        Controls.LoadStatus.String = ""
+        Api.LoadClearTimer:Stop()
+      end
+    end
+
+    Api.PollTimer:Stop()
+    Api.PollTimer:Start(GetPollInterval())
+  end
+
+  -- ── Parse getScheduleMode response ───────────────────────────────────────
+  local function ParseScheduleMode(tbl, code, data, err, headers)
+    if DebugRx then print("Rx ScheduleMode:", code, data) end
+    if code < 200 or code >= 300 then return end
+    local ok, xml = pcall(luaXML.eval, data)
+    if not ok then return end
+    local smNode = FindTag(xml, "scheduleMode")
+    if smNode then
+      local val = (smNode[1] or ""):match("^%s*(.-)%s*$")  -- trim whitespace
+      if val ~= "" then
+        State.ScheduleMode  = val
+        ModeManual.Value    = (val == "MANUAL" and 1 or 0)
+        ModeScheduled.Value = (val ~= "MANUAL" and 1 or 0)
+      end
+    end
+  end
+
+  -- ── Parse getClipInfos / getShowInfos ─────────────────────────────────────
+  -- Uses Lua string patterns instead of luaXML.eval to avoid max-execution errors.
+  local LastClipInfosLen = 0
+  local LastShowInfosLen = 0
+
+  local function ParseClipInfos(tbl, code, data, err, headers)
+    if DebugRx then print("Rx ClipInfos:", code) end
+    if code < 200 or code >= 300 then return end
+    local dataLen = #data
+    if dataLen == LastClipInfosLen and next(Clips) ~= nil then
+      if DebugRx then print("ClipInfos unchanged, skipping parse") end
+      return
+    end
+    LastClipInfosLen = dataLen
+
+    local choices = {}
+    Clips = {}
+
+    -- Each clip is wrapped in a clipInfo element; extract per-block with gmatch
+    for block in data:gmatch("<[^>]*:?clipInfo[^>]*>(.-)</%s*[^:>]*:?clipInfo%s*>") do
+      local id = (block:match("<[^>]*:?clipId[^>]*>(urn:uuid:[^<]+)<") or
+                  block:match("<[^>]*:?clipId[^>]*>([^<]+)<") or "")
+      id = NormUUID(id:match("^%s*(.-)%s*$"))
+      local name  = (block:match("<[^>]*:?name[^>]*>([^<]+)<") or ""):match("^%s*(.-)%s*$")
+      local ctype = (block:match("<[^>]*:?clipType[^>]*>([^<]+)<") or ""):match("^%s*(.-)%s*$")
+      local dur   =  block:match("<[^>]*:?duration[^>]*>(PT[^<]+)<") or "PT0S"
+      local enc   = (block:match("<[^>]*:?encrypted[^>]*>([^<]+)<") or ""):match("^%s*(.-)%s*$")
+      local play  = (block:match("<[^>]*:?playable[^>]*>([^<]+)<") or ""):match("^%s*(.-)%s*$")
+      if id ~= "" and name ~= "" then
+        Clips[id] = { name=name, clipType=ctype, duration=IsoDurationToSec(dur),
+                      encrypted=enc, playable=play }
+        table.insert(choices, { Text=name, Id=id })
+      end
+    end
+
+    table.sort(choices, function(a,b) return a.Text < b.Text end)
+    table.insert(choices, 1, { Text="", Id="" })  -- blank entry to allow clearing
+    LoadCPLName.Choices = choices
+    if DebugRx then print("Clips loaded:", #choices) end
+
+    -- Retroactively resolve current clip name now that cache is populated
+    if State.CurrentClipId ~= "" and Clips[State.CurrentClipId] then
+      local c = Clips[State.CurrentClipId]
+      State.CPLName = c.name     or ""
+      State.CPLType = c.clipType or ""
+      RefreshUI()
+    end
+  end
+
+  -- ── Parse getShowInfos response ───────────────────────────────────────────
+  local function ParseShowInfos(tbl, code, data, err, headers)
+    if DebugRx then print("Rx ShowInfos:", code) end
+    if code < 200 or code >= 300 then return end
+    local dataLen = #data
+    if dataLen == LastShowInfosLen and next(Shows) ~= nil then
+      if DebugRx then print("ShowInfos unchanged, skipping parse") end
+      return
+    end
+    LastShowInfosLen = dataLen
+
+    local choices = {}
+    Shows = {}
+
+    for block in data:gmatch("<[^>]*:?showInfo[^>]*>(.-)</%s*[^:>]*:?showInfo%s*>") do
+      local id = (block:match("<[^>]*:?showId[^>]*>(urn:uuid:[^<]+)<") or
+                  block:match("<[^>]*:?showId[^>]*>([^<]+)<") or "")
+      id = NormUUID(id:match("^%s*(.-)%s*$"))
+      local name = (block:match("<[^>]*:?name[^>]*>([^<]+)<") or ""):match("^%s*(.-)%s*$")
+      local dur  =  block:match("<[^>]*:?duration[^>]*>(PT[^<]+)<") or "PT0S"
+      if id ~= "" and name ~= "" then
+        Shows[id] = { name=name, duration=IsoDurationToSec(dur) }
+        table.insert(choices, { Text=name, Id=id })
+      end
+    end
+
+    table.sort(choices, function(a,b) return a.Text < b.Text end)
+    table.insert(choices, 1, { Text="", Id="" })  -- blank entry to allow clearing
+    LoadSPLName.Choices = choices
+    if DebugRx then print("Shows loaded:", #choices) end
+
+    if State.ContentType == "SHOW" and State.ContentId ~= "" and Shows[State.ContentId] then
+      State.SPLName = Shows[State.ContentId].name or ""
+      RefreshUI()
+    end
+  end
+
+  -- ── Parse getDeviceComponentInfos response ────────────────────────────────
+  local function ParseDeviceInfo(tbl, code, data, err, headers)
+    if DebugRx then print("Rx DeviceInfo:", code) end
+    if code < 200 or code >= 300 then return end
+    local ok, xml = pcall(luaXML.eval, data)
+    if not ok then
+      if DebugRx then print("ParseDeviceInfo XML error:", xml) end
+      return
+    end
+
+    -- Collect specific fields from specific component types.
+    -- Software version: PLAYER's "version" property (package version, e.g. 4.9.5.2)
+    --   NOT SERVER's "software" property (Show Manager version)
+    -- Serial number: PLAYER's "serial-number" SYSTEM property
+    local result = { serial="", software="", decoderModel="" }
+
+    local function WalkProps(node, ctype, rec)
+      if type(node) ~= "table" then return end
+      local tag = (node[0] or ""):match("[^:]+$") or ""
+      if tag:lower() == "devicecomponentproperty" then
+        local typeNode  = FindTag(node, "type")
+        local propType  = typeNode and (typeNode[1] or "") or ""
+        propType = propType:upper()
+        local propName  = (GetText(node, "name")  or ""):lower()
+        local propValue =  GetText(node, "value") or ""
+        if DebugRx then
+          print("  Prop: type=" .. propType .. " name=" .. propName .. " value=" .. propValue)
+        end
+        -- Software version: PLAYER's "version" property only (package version 4.9.x.x)
+        if ctype == "PLAYER" and propType == "VERSION" and propName == "version" then
+          if rec.software == "" then rec.software = propValue end
+        end
+        -- Serial: store in rec; Walk will merge with priority rules
+        if propName:find("serial") and rec.serial == "" then
+          rec.serial = propValue
+        end
+      end
+      for i = 1, #node do WalkProps(node[i], ctype, rec) end
+    end
+
+    local function Walk(node)
+      if type(node) ~= "table" then return end
+      local tag = (node[0] or ""):match("[^:]+$") or ""
+      if tag:lower() == "devicecomponentinfo" then
+        local ctypeNode = FindTag(node, "deviceComponentType")
+        local ctype = ctypeNode and (ctypeNode[1] or "") or ""
+        ctype = ctype:upper()
+        if DebugRx then
+          print("DeviceComponent: type=" .. ctype ..
+                " model=" .. (GetText(node, "deviceComponentModel") or ""))
+        end
+        local rec = { serial="", software="" }
+        WalkProps(node, ctype, rec)
+        -- Software: first PLAYER version wins
+        if rec.software ~= "" and result.software == "" then
+          result.software = rec.software
+        end
+        -- Serial + model: DECODER is the mediablock
+        if ctype == "DECODER" then
+          if rec.serial ~= "" then result.serial = rec.serial end
+          -- Detect CAT745 vs other — only set detected flag if we got a clear answer
+          local model = (GetText(node, "deviceComponentModel") or ""):lower()
+          if model ~= "" then
+            result.decoderModel = model
+          end
+        elseif rec.serial ~= "" and result.serial == "" then
+          result.serial = rec.serial
+        end
+      else
+        for i = 1, #node do Walk(node[i]) end
+      end
+    end
+    Walk(xml)
+
+    if result.serial   ~= "" then Controls.ServerSerial.String   = result.serial   end
+    if result.software ~= "" then Controls.ServerSoftware.String = result.software end
+    -- CAT745 detection: only disable if we got a clear non-cat745 model
+    -- Default: do NOT disable (prefer enabled over incorrectly disabled)
+    if isCat745 then
+      local model = result.decoderModel
+      local isCat745Unit = model:find("cat745") ~= nil
+      local isOtherUnit  = model ~= "" and not isCat745Unit
+      -- LED: green only when cat745 confirmed present
+      Controls.LedCat745Detected.Boolean = isCat745Unit
+      -- IsDisabled: only if we got a definitive non-cat745 model back
+      local disable = isOtherUnit
+      Controls.InputServer.IsDisabled = disable
+      Controls.InputHDMI1.IsDisabled  = disable
+      Controls.InputHDMI2.IsDisabled  = disable
+      Controls.ModeRealD.IsDisabled   = disable
+      if DebugRx then
+        print("DECODER model:", model, "isCat745Unit:", isCat745Unit, "disabled:", disable)
+      end
+    end
+
+
+    if DebugRx then
+      print("DeviceInfo: serial=" .. result.serial .. " sw=" .. result.software)
+    end
+  end
+
+  -- ── Parse getSystemTime response ──────────────────────────────────────────
+  local function ParseSystemTime(tbl, code, data, err, headers)
+    if DebugRx then print("Rx SystemTime:", code, data) end
+    if code < 200 or code >= 300 then return end
+    local ok, xml = pcall(luaXML.eval, data)
+    if not ok then return end
+    -- Response has <time> (xsd:dateTime) and <timeZoneId>
+    local t  = GetText(xml, "time")
+    local tz = GetText(xml, "timeZoneId") or ""
+    if t then
+      Controls.ServerTime.String = tz ~= "" and (t .. "  (" .. tz .. ")") or t
+    end
+  end
+
+  -- ── Parse getTransferInfos response (ingest status) ───────────────────────
+  local function ParseTransferInfos(tbl, code, data, err, headers)
+    if DebugRx then print("Rx TransferInfos:", code) end
+    if code < 200 or code >= 300 then return end
+    local ok, xml = pcall(luaXML.eval, data)
+    if not ok then return end
+
+    local activeCount, maxPct = 0, 0
+    local function Walk(node)
+      if type(node) ~= "table" then return end
+      local tag = (node[0] or ""):match("[^:]+$") or ""
+      if tag:lower() == "transferinfo" then
+        local status = (GetText(node, "transferStatus") or ""):upper()
+        if status == "IN_PROGRESS" or status == "QUEUED" then
+          activeCount = activeCount + 1
+          local pct = tonumber(GetText(node, "percentageComplete")) or 0
+          if pct > maxPct then maxPct = pct end
+        end
+      else
+        for i = 1, #node do Walk(node[i]) end
+      end
+    end
+    Walk(xml)
+
+    Controls.IngestActive.Boolean = activeCount > 0
+    Controls.IngestProgress.Value = maxPct
+
+    -- Drive dedicated ingest timer: run every 5s while active, stop when idle
+    if activeCount > 0 and not Api.IngestTimer.Running then
+      Api.IngestTimer:Start(5)
+    elseif activeCount == 0 and Api.IngestTimer.Running then
+      Api.IngestTimer:Stop()
+    end
+  end
+
+  -- ── API call helpers ──────────────────────────────────────────────────────
+  local function GetPlaybackState()
+    if DebugFunction then print("GetPlaybackState()") end
+    Send(Api.PlaybackSvc, "getPlaybackState",
+      '<v1:getPlaybackStateRequest/>', ParsePlaybackState)
+  end
+
+  local function GetScheduleMode()
+    if DebugFunction then print("GetScheduleMode()") end
+    Send(Api.PlaybackSvc, "getScheduleMode",
+      '<v1:getScheduleModeRequest/>', ParseScheduleMode)
+  end
+
+  -- Parse a single getCPL response (used to resolve VF/lamp clips not in getClipInfos list)
+  local function MakeSingleClipHandler(clipId)
+    return function(tbl, code, data, err, headers)
+      if DebugRx then print("Rx getCPL:", code, "for", clipId) end
+      if code < 200 or code >= 300 then return end
+      local ok, xml = pcall(luaXML.eval, data)
+      if not ok then return end
+      -- getCPL returns a CPL XML document; extract ContentTitleText as the name
+      local titleNode = FindTag(xml, "ContentTitleText")
+      local name = titleNode and (titleNode[1] or "") or ""
+      if name == "" then
+        local ann = FindTag(xml, "AnnotationText")
+        name = ann and (ann[1] or "") or ""
+      end
+      if name ~= "" then
+        -- Store under the clip ID we looked up
+        Clips[clipId] = Clips[clipId] or {}
+        Clips[clipId].name = name
+        -- Update display if this is still the current clip
+        if State.CurrentClipId == clipId then
+          State.CPLName = name
+          RefreshUI()
+        end
+      end
+    end
+  end
+
+  -- Fetch a single clip's CPL document by UUID (for clips not in the getClipInfos list)
+  GetSingleClip = function(clipId)
+    if DebugFunction then print("GetSingleClip(" .. (clipId or "") .. ")") end
+    Send(Api.ContentSvc, "getCPL",
+      string.format('<v1:getCPLRequest><v1:clipId>urn:uuid:%s</v1:clipId></v1:getCPLRequest>', clipId),
+      MakeSingleClipHandler(clipId))
+  end
+
+  local function GetClipInfos()
+    if DebugFunction then print("GetClipInfos()") end
+    Send(Api.ContentSvc, "getClipInfos",
+      '<v1:getClipInfosRequest/>', ParseClipInfos)
+  end
+
+  local function GetShowInfos()
+    if DebugFunction then print("GetShowInfos()") end
+    Send(Api.ShowSvc, "getShowInfos",
+      '<v1:getShowInfosRequest/>', ParseShowInfos)
+  end
+
+  local function GetDeviceInfo()
+    if DebugFunction then print("GetDeviceInfo()") end
+    Send(Api.SystemSvc, "getDeviceComponentInfos",
+      '<v1:getDeviceComponentInfosRequest/>', ParseDeviceInfo)
+    Send(Api.SystemSvc, "getSystemTime",
+      '<v1:getSystemTimeRequest/>', ParseSystemTime)
+  end
+
+  local function GetTransferInfos()
+    if DebugFunction then print("GetTransferInfos()") end
+    Send(Api.TransferSvc, "getTransferInfos",
+      '<v1:getTransferInfosRequest/>', ParseTransferInfos)
+  end
+
+  -- ── Initial connection ────────────────────────────────────────────────────
+  local function Connect()
+    if DebugFunction then print("Connect()") end
+    Api.RetryTimer:Stop()
+    if IPAddress.String == "" then
+      ReportStatus("MISSING", "Enter IP Address")
+      return
+    end
+    ReportStatus("INITIALIZING", "Connecting…")
+    ClearState()
+    -- Fire initial data requests; use playback state as connectivity probe
+    GetDeviceInfo()
+    Timer.CallAfter(GetClipInfos,    0.5)
+    Timer.CallAfter(GetShowInfos,    1.0)
+    Timer.CallAfter(GetScheduleMode, 1.5)
+    Timer.CallAfter(GetTransferInfos,2.0)
+    Timer.CallAfter(function()
+      GetPlaybackState()
+      Api.PollTimer:Start(GetPollInterval())
+      Api.TickTimer:Start(1)
+      Api.ControlTimer:Start(3)   -- start 3s volume/mute/mode polling
+    end, 2.5)
+  end
+
+  local function NewConnection()
+    Api.PollTimer:Stop()
+    Api.TickTimer:Stop()
+    Api.IngestTimer:Stop()
+    Api.ControlTimer:Stop()
+    Api.RetryTimer:Stop()
+    ClearState()
+    Timer.CallAfter(Connect, 0.2)
+  end
+
+  -- ── Poll function ──────────────────────────────────────────────────────────
+  local ContentListLastTime = 0   -- os.time() of last getClipInfos/getShowInfos call
+
+  local function PollDevice()
+    if DebugFunction then print("PollDevice() count="..Api.PollCount) end
+    GetPlaybackState()
+
+    local isPlaying = (State.TransportState == "PLAYING")
+
+    if Api.PollCount % 4 == 2 then
+      GetTransferInfos()
+    end
+
+    -- Content lists: at most once every 60 seconds — they change very rarely
+    local now = os.time()
+    if (now - ContentListLastTime) >= 60 then
+      ContentListLastTime = now
+      GetClipInfos()
+      GetShowInfos()
+    end
+
+    -- Schedule mode and server time: low frequency
+    if Api.PollCount % 8 == 7 then
+      GetScheduleMode()
+      Send(Api.SystemSvc, "getSystemTime",
+        '<v1:getSystemTimeRequest/>', ParseSystemTime)
+    end
+    Api.PollCount = Api.PollCount + 1
+  end
+
+  -- ── Timer handlers ────────────────────────────────────────────────────────
+  Api.PollTimer.EventHandler  = PollDevice
+  Api.RetryTimer.EventHandler = Connect
+  Api.LoadClearTimer.EventHandler = function()
+    Controls.LoadStatus.String = ""
+  end
+  Api.IngestTimer.EventHandler = function()
+    if DebugFunction then print("IngestTimer fired") end
+    GetTransferInfos()
+  end
+  Api.ControlTimer.EventHandler = function()
+    GetControlState()
+    if isCat745 then GetInputSelectOnce() end
+  end
+
+  -- ── Control event handlers ────────────────────────────────────────────────
+  IPAddress.EventHandler = NewConnection
+  Username.EventHandler  = NewConnection
+  Password.EventHandler  = function(ctrl)
+    -- No session auth on DSS – password field not used but kept for consistency
+    ctrl.String = "********"
+    NewConnection()
+  end
+
+  ModeManual.EventHandler = function()
+    if DebugFunction then print("ModeManual pressed") end
+    Send(Api.PlaybackSvc, "setScheduleMode",
+      '<v1:setScheduleModeRequest><scheduleMode>MANUAL</scheduleMode></v1:setScheduleModeRequest>')
+    State.ScheduleMode = "MANUAL"
+    ModeManual.Value   = 1
+    ModeScheduled.Value= 0
+  end
+
+  ModeScheduled.EventHandler = function()
+    if DebugFunction then print("ModeScheduled pressed") end
+    Send(Api.PlaybackSvc, "setScheduleMode",
+      '<v1:setScheduleModeRequest><scheduleMode>FULL_AUTOMATIC</scheduleMode></v1:setScheduleModeRequest>')
+    State.ScheduleMode = "FULL_AUTOMATIC"
+    ModeManual.Value   = 0
+    ModeScheduled.Value= 1
+  end
+
+  Play.EventHandler = function()
+    if DebugFunction then print("Play pressed") end
+    Send(Api.PlaybackSvc, "play", '<v1:playRequest/>')
+    Timer.CallAfter(GetPlaybackState, 1.0)
+  end
+
+  Pause.EventHandler = function()
+    if DebugFunction then print("Pause pressed") end
+    Send(Api.PlaybackSvc, "pause", '<v1:pauseRequest/>')
+    Timer.CallAfter(GetPlaybackState, 1.0)
+  end
+
+  Stop.EventHandler = function()
+    if DebugFunction then print("Stop pressed, state=" .. State.TransportState) end
+    local ts = State.TransportState
+
+    if ts == "PLAYING" or ts == "PAUSED" or ts == "LATE" then
+      -- Normal stop: halt playback → STOPPED
+      Send(Api.PlaybackSvc, "stop", '<v1:stopRequest/>')
+      Timer.CallAfter(GetPlaybackState, 1.0)
+
+    elseif ts == "STOPPED" then
+      -- ── Stop-Stop: eject then re-select ─────────────────────────────────
+      local mode        = State.ScheduleMode
+      local hasSPL      = (State.SPLName ~= "" and State.ContentType == "SHOW")
+      local savedId     = State.ContentId      -- SPL or CPL UUID (already stripped of urn:uuid:)
+      local savedClipId = State.CurrentClipId  -- current clip UUID
+      local savedType   = State.ContentType    -- "SHOW" or "CLIP"
+
+      if DebugFunction then
+        print("Stop-Stop: mode=" .. mode ..
+              " hasSPL=" .. tostring(hasSPL) ..
+              " savedId=" .. savedId ..
+              " savedType=" .. savedType)
+      end
+
+      -- Step 1: eject (deselect content)
+      Send(Api.PlaybackSvc, "selectContent",
+        '<v1:selectContentRequest><contentId></contentId></v1:selectContentRequest>')
+
+      if mode == "FULL_AUTOMATIC" or mode == "SELECT_AUTOMATIC" then
+        -- ── Condition 2: Scheduled mode ───────────────────────────────────
+        -- Eject → wait 1s → switch to Manual → wait 0.5s → switch back to Scheduled
+        Timer.CallAfter(function()
+          Send(Api.PlaybackSvc, "setScheduleMode",
+            '<v1:setScheduleModeRequest><scheduleMode>MANUAL</scheduleMode></v1:setScheduleModeRequest>')
+          State.ScheduleMode = "MANUAL"
+          ModeManual.Value   = 1
+          ModeScheduled.Value= 0
+        end, 1.0)
+        Timer.CallAfter(function()
+          Send(Api.PlaybackSvc, "setScheduleMode",
+            '<v1:setScheduleModeRequest><scheduleMode>' .. mode .. '</scheduleMode></v1:setScheduleModeRequest>')
+          State.ScheduleMode  = mode
+          ModeManual.Value    = 0
+          ModeScheduled.Value = 1
+          Timer.CallAfter(GetPlaybackState, 0.5)
+        end, 1.5)
+
+      elseif not hasSPL and savedClipId ~= "" then
+        -- ── Condition 3: Manual mode, CPL/Clip only (no SPL) ─────────────
+        -- Eject → wait 1s → re-select the same clip
+        Timer.CallAfter(function()
+          Send(Api.PlaybackSvc, "selectContent",
+            string.format(
+              '<v1:selectContentRequest><contentId>urn:uuid:%s</contentId><playableContentType>CLIP</playableContentType></v1:selectContentRequest>',
+              savedClipId))
+          Controls.LoadStatus.String = "Re-loading CPL…"
+          Api.LoadClearTimer:Stop()
+          Api.LoadClearTimer:Start(30)
+          Timer.CallAfter(GetPlaybackState, 1.0)
+        end, 1.0)
+
+      elseif hasSPL and savedId ~= "" then
+        -- ── Condition 4: Manual mode, SPL loaded ─────────────────────────
+        -- Eject → wait 1s → re-select the same SPL
+        Timer.CallAfter(function()
+          Send(Api.PlaybackSvc, "selectContent",
+            string.format(
+              '<v1:selectContentRequest><contentId>urn:uuid:%s</contentId><playableContentType>SHOW</playableContentType></v1:selectContentRequest>',
+              savedId))
+          Controls.LoadStatus.String = "Re-loading SPL…"
+          Api.LoadClearTimer:Stop()
+          Api.LoadClearTimer:Start(30)
+          Timer.CallAfter(GetPlaybackState, 1.0)
+        end, 1.0)
+
+      else
+        -- No content to re-select — just poll for new state
+        Timer.CallAfter(GetPlaybackState, 1.0)
+      end
+
+    else
+      -- Any other state: just send stop
+      Send(Api.PlaybackSvc, "stop", '<v1:stopRequest/>')
+      Timer.CallAfter(GetPlaybackState, 1.0)
+    end
+  end
+
+  -- Eject: DSS has no explicit eject op. We issue stop then clear content
+  -- selection by calling selectContent with an empty contentId (per the WSDL:
+  -- "If null or an empty string is specified the selected content will be unselected.")
+  Controls.Eject.EventHandler = function()
+    if DebugFunction then print("Eject pressed") end
+    Send(Api.PlaybackSvc, "stop", '<v1:stopRequest/>')
+    Timer.CallAfter(function()
+      -- Deselect content by passing empty contentId
+      Send(Api.PlaybackSvc, "selectContent",
+        '<v1:selectContentRequest><v1:contentId></v1:contentId></v1:selectContentRequest>')
+      State.ContentId    = ""
+      State.CPLName      = ""
+      State.SPLName      = ""
+      State.ClipPosition = 0
+      State.ClipDuration = 0
+      State.ShowPosition = 0
+      State.ShowDuration = 0
+      Controls.LoadStatus.String = "Ejected"
+      Controls.LoadError.String  = ""
+      Timer.CallAfter(GetPlaybackState, 1.0)
+    end, 1.0)
+  end
+
+  SkipForward.EventHandler = function()
+    if DebugFunction then print("SkipForward pressed") end
+    Send(Api.PlaybackSvc, "next", '<v1:nextRequest/>')
+    Timer.CallAfter(GetPlaybackState, 1.5)
+  end
+
+  SkipBack.EventHandler = function()
+    if DebugFunction then print("SkipBack pressed") end
+    Send(Api.PlaybackSvc, "previous", '<v1:previousRequest/>')
+    Timer.CallAfter(GetPlaybackState, 1.5)
+  end
+
+  LoadSPL.EventHandler = function()
+    if DebugFunction then print("LoadSPL pressed") end
+    if State.ScheduleMode ~= "MANUAL" then
+      Controls.LoadError.String = "Manual mode required"
+      return
+    end
+    local sel = LoadSPLName.String
+    local ok, obj = pcall(json.decode, sel)
+    local showId = (ok and obj and obj.Id) or sel
+    if showId and showId ~= "" then
+      -- selectContent uses v1_0 namespace; child elements unqualified
+      Send(Api.PlaybackSvc, "selectContent",
+        string.format(
+          '<v1:selectContentRequest><contentId>urn:uuid:%s</contentId><playableContentType>SHOW</playableContentType></v1:selectContentRequest>',
+          showId))
+      Controls.LoadStatus.String = "Loading SPL…"
+      Controls.LoadError.String  = ""
+      Api.LoadClearTimer:Stop()
+      Api.LoadClearTimer:Start(30)
+      Timer.CallAfter(GetPlaybackState, 2.0)
+    end
+  end
+
+  LoadCPL.EventHandler = function()
+    if DebugFunction then print("LoadCPL pressed") end
+    local sel = LoadCPLName.String
+    local ok, obj = pcall(json.decode, sel)
+    local clipId = (ok and obj and obj.Id) or sel
+    if clipId and clipId ~= "" then
+      local c = Clips[clipId]
+      if c then
+        Controls.CPLInfoName.String     = c.name or ""
+        Controls.CPLInfoUUID.String     = clipId
+        Controls.CPLInfoType.String     = c.clipType or ""
+        Controls.CPLInfoDuration.String = FmtTime(c.duration)
+        Controls.CPLInfoEncrypted.Boolean = (c.encrypted == "true")
+        Controls.CPLInfoPlayable.Boolean  = (c.playable  == "true")
+      end
+      if State.ScheduleMode ~= "MANUAL" then
+        Controls.LoadError.String = "Manual mode required"
+        return
+      end
+      Send(Api.PlaybackSvc, "selectContent",
+        string.format(
+          '<v1:selectContentRequest><contentId>urn:uuid:%s</contentId><playableContentType>CLIP</playableContentType></v1:selectContentRequest>',
+          clipId))
+      Controls.LoadStatus.String = "Loading CPL…"
+      Controls.LoadError.String  = ""
+      Api.LoadClearTimer:Stop()
+      Api.LoadClearTimer:Start(30)
+      Timer.CallAfter(GetPlaybackState, 2.0)
+    end
+  end
+
+  -- ── Content list selection → populate info panel ──────────────────────────
+  LoadCPLName.EventHandler = function(ctrl)
+    local ok, obj = pcall(json.decode, ctrl.String)
+    local clipId = (ok and obj and obj.Id) or ctrl.String
+    local c = Clips[clipId]
+    if c then
+      Controls.CPLInfoName.String     = c.name     or ""
+      Controls.CPLInfoUUID.String     = clipId
+      Controls.CPLInfoType.String     = c.clipType  or ""
+      Controls.CPLInfoDuration.String = FmtTime(c.duration)
+      Controls.CPLInfoEncrypted.Boolean = (c.encrypted == "true")
+      Controls.CPLInfoPlayable.Boolean  = (c.playable  == "true")
+    end
+  end
+
+  -- ── Control page runtime ─────────────────────────────────────────────────────
+  -- (CtrlState, isCat745, hasDolby, RefreshControlUI, GetControlState declared near top)
+
+  -- Namespace versions for v1_3 (PlaybackMode2) and v1_4 (inputSelect) and v1_5 (volume/mute)
+  local NS_V1_3 = "http://www.dolby.com/dcinema/ws/smi/v1_3"
+  local NS_V1_4 = "http://www.dolby.com/dcinema/ws/smi/v1_4"
+  local NS_V1_5 = "http://www.dolby.com/dcinema/ws/smi/v1_5"
+
+  local function SendV1n(path, soapAction, ns, bodyXml, handler)
+    if DebugFunction then print("SendV1n() "..soapAction) end
+    local url = string.format("http://%s:%d%s", IPAddress.String, Api.Port, path)
+    local envelope = string.format(
+      '<?xml version="1.0" encoding="UTF-8"?>'..
+      '<soapenv:Envelope'..
+      ' xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"'..
+      ' xmlns:v1n="%s">'..
+      '<soapenv:Body>%s</soapenv:Body>'..
+      '</soapenv:Envelope>',
+      ns, bodyXml)
+    if DebugTx then print("Tx:", url, "\n", envelope) end
+    HttpClient.Post({
+      Url     = url,
+      Timeout = Api.Timeout,
+      Headers = {
+        ["Content-Type"] = "text/xml; charset=utf-8",
+        ["SOAPAction"]   = '"'..Api.NS.."/"..soapAction..'"',
+      },
+      Data         = envelope,
+      EventHandler = handler or DefaultResponseHandler,
+    })
+  end
+
+  -- Refresh Control page buttons from CtrlState
+  RefreshControlUI = function()
+    local pm = CtrlState.PlaybackMode
+    Controls.Mode2D.Value      = (pm == "TWO_D"    and 1 or 0)
+    Controls.Mode3D.Value      = (pm == "THREE_D"  and 1 or 0)
+    Controls.ModeDolby3D.Value = (pm == "DOLBY_3D" and 1 or 0)
+    Controls.ModeRealD.Value   = (pm == "REAL_D"   and 1 or 0)
+    if isCat745 then
+      local im = CtrlState.InputMode
+      Controls.InputServer.Value = (im == "SERVER" and 1 or 0)
+      Controls.InputHDMI1.Value  = (im == "HDMI_1" and 1 or 0)
+      Controls.InputHDMI2.Value  = (im == "HDMI_2" and 1 or 0)
+    end
+    if hasDolby then
+      Controls.AudioMute.Value  = CtrlState.Muted and 1 or 0
+      Controls.VolumeLevel.String = string.format("%.1f", CtrlState.Volume)
+      Controls.VolumeFader.Value  = CtrlState.Volume
+    end
+    -- Show/hide Load buttons based on Schedule mode
+    local isScheduled = (State.ScheduleMode ~= "MANUAL" and State.ScheduleMode ~= "")
+    Controls.LoadSPL.IsInvisible = isScheduled
+    Controls.LoadCPL.IsInvisible = isScheduled
+  end
+
+  -- Parse getPlaybackMode2 response
+  local function ParsePlaybackMode2(tbl, code, data, err, headers)
+    if DebugRx then print("Rx PlaybackMode2:", code) end
+    if code < 200 or code >= 300 then return end
+    local ok, xml = pcall(luaXML.eval, data)
+    if not ok then return end
+    local pmNode = FindTag(xml, "playbackMode")
+    if pmNode then
+      local val = (pmNode[1] or ""):match("^%s*(.-)%s*$")
+      local ext = pmNode["extension"] or ""
+      if val == "EXTENSION" and ext ~= "" then val = ext end
+      if val ~= "" then CtrlState.PlaybackMode = val end
+    end
+    RefreshControlUI()
+  end
+
+  -- Parse getInputSelect response
+  local function ParseInputSelect(tbl, code, data, err, headers)
+    if DebugRx then print("Rx InputSelect:", code) end
+    if code < 200 or code >= 300 then return end
+    local ok, xml = pcall(luaXML.eval, data)
+    if not ok then return end
+    local imNode = FindTag(xml, "inputSelectMode")
+    if imNode then
+      CtrlState.InputMode = (imNode[1] or ""):match("^%s*(.-)%s*$")
+    end
+    RefreshControlUI()
+  end
+
+  -- Parse getVolume response
+  local function ParseVolume(tbl, code, data, err, headers)
+    if DebugRx then print("Rx Volume:", code) end
+    if code < 200 or code >= 300 then return end
+    local ok, xml = pcall(luaXML.eval, data)
+    if not ok then return end
+    local vNode = FindTag(xml, "volume")
+    if vNode then CtrlState.Volume = tonumber(vNode[1]) or 0.0 end
+    RefreshControlUI()
+  end
+
+  -- Parse getMute response
+  local function ParseMute(tbl, code, data, err, headers)
+    if DebugRx then print("Rx Mute:", code) end
+    if code < 200 or code >= 300 then return end
+    local ok, xml = pcall(luaXML.eval, data)
+    if not ok then return end
+    local mNode = FindTag(xml, "muted")
+    if mNode then CtrlState.Muted = (mNode[1] == "true") end
+    RefreshControlUI()
+  end
+
+  -- Fetch current Control page state from server
+  GetControlState = function()
+    -- playbackMode is read from getPlaybackState response attribute (no extra call needed)
+    -- Volume and mute: poll every 3 seconds via ControlTimer
+    if hasDolby then
+      SendV1n(Api.PlaybackSvc, "getVolume",
+        NS_V1_5, '<v1n:getVolumeRequest/>', ParseVolume)
+      SendV1n(Api.PlaybackSvc, "getMute",
+        NS_V1_5, '<v1n:getMuteRequest/>', ParseMute)
+    end
+  end
+
+  -- Fetch Input Select state once at connect (not polled — CAT745 flag set once)
+  -- Fetch Input Select state (called at connect and every 3s via ControlTimer)
+  GetInputSelectOnce = function()
+    if isCat745 then
+      SendV1n(Api.PlaybackSvc, "getInputSelect",
+        NS_V1_4, '<v1n:getInputSelectRequest/>', ParseInputSelect)
+    end
+  end
+
+  -- 2D/3D mode button handlers
+  local modeMap = {
+    Mode2D="TWO_D", Mode3D="THREE_D", ModeDolby3D="DOLBY_3D", ModeRealD="REAL_D"
+  }
+  for btnName, modeVal in pairs(modeMap) do
+    Controls[btnName].EventHandler = function()
+      CtrlState.PlaybackMode = modeVal
+      RefreshControlUI()
+      SendV1n(Api.PlaybackSvc, "setPlaybackMode2", NS_V1_3,
+        string.format('<v1n:setPlaybackMode2Request><playbackMode>%s</playbackMode></v1n:setPlaybackMode2Request>',
+          modeVal))
+    end
+  end
+
+  -- Input Select handlers (CAT745)
+  if isCat745 then
+    local inputMap = { InputServer="SERVER", InputHDMI1="HDMI_1", InputHDMI2="HDMI_2" }
+    for btnName, inputVal in pairs(inputMap) do
+      Controls[btnName].EventHandler = function()
+        CtrlState.InputMode = inputVal
+        RefreshControlUI()
+        SendV1n(Api.PlaybackSvc, "inputSelect", NS_V1_4,
+          string.format('<v1n:inputSelectRequest><inputSelectMode>%s</inputSelectMode></v1n:inputSelectRequest>',
+            inputVal))
+      end
+    end
+  end
+
+  -- Audio handlers (Dolby Cinema Processor)
+  if hasDolby then
+    Controls.AudioMute.EventHandler = function()
+      CtrlState.Muted = Controls.AudioMute.Value == 1
+      SendV1n(Api.PlaybackSvc, "setMute", NS_V1_5,
+        string.format('<v1n:setMuteRequest><muted>%s</muted></v1n:setMuteRequest>',
+          CtrlState.Muted and "true" or "false"))
+      RefreshControlUI()
+    end
+
+    Controls.VolumeFader.EventHandler = function()
+      CtrlState.Volume = math.max(0.0, math.min(10.0,
+        math.floor(Controls.VolumeFader.Value * 10 + 0.5) / 10))
+      Controls.VolumeLevel.String = string.format("%.1f", CtrlState.Volume)
+      SendV1n(Api.PlaybackSvc, "setVolume", NS_V1_5,
+        string.format('<v1n:setVolumeRequest><volume>%.1f</volume></v1n:setVolumeRequest>',
+          CtrlState.Volume))
+    end
+
+    local function ApplyVolumeStep(dir)
+      CtrlState.Volume = math.max(0.0, math.min(10.0,
+        math.floor((CtrlState.Volume + dir * 0.1) * 10 + 0.5) / 10))
+      Controls.VolumeLevel.String = string.format("%.1f", CtrlState.Volume)
+      Controls.VolumeFader.Value  = CtrlState.Volume
+      SendV1n(Api.PlaybackSvc, "setVolume", NS_V1_5,
+        string.format('<v1n:setVolumeRequest><volume>%.1f</volume></v1n:setVolumeRequest>',
+          CtrlState.Volume))
+    end
+
+    Controls.VolumeUp.EventHandler = function()
+      ApplyVolumeStep(1)
+    end
+
+    Controls.VolumeDown.EventHandler = function()
+      ApplyVolumeStep(-1)
+    end
+  end  -- hasDolby
+
+  -- ── Initialization ────────────────────────────────────────────────────────
+  local function Initialization()
+    if DebugFunction then print("Initialization()") end
+    SetupDebugPrint()
+    ClearState()
+    ReportStatus("INITIALIZING", "Starting…")
+    Connect()
+  end
+
+  -- Fetch Control state after initial connection settles
+  local origConnect = Connect
+  Connect = function()
+    origConnect()
+    Timer.CallAfter(function()
+      -- isCat745 is set by ParseDeviceInfo (fires at 0s); by 4s it's known
+      GetInputSelectOnce()
+      GetControlState()
+    end, 4.0)
+  end
+
+  Initialization()
+end  -- Controls
+
