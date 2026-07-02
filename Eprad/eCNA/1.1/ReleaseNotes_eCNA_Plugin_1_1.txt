@@ -7,7 +7,7 @@ Version 1.0.1 (build 53):  Minor internal fixes.
 Checks on invalid IP address and internal formatting consistent with Q-SYS plugin standards. 
 The Status pin is also correctly named.  This may impact any designs that update from 1.0.0 that use the Status pin. 
 
-Version 1.1
+Version 1.1 (build 34)
 Added Aux Input and Aux Output names.  The plugin obtains the user defined input and output
 names.
 
