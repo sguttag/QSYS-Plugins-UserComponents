@@ -6,11 +6,11 @@ Please see the help file(s) for more detailed descriptions of the functions and 
 
 Version 1.1 adds has the plugin fetch the user-defined Aux Input and Aux Output names.  
 
-<img width="684" height="614" alt="image" src="https://github.com/user-attachments/assets/776d9b40-75cf-402a-9543-4706c8813bc6" />
+<img width="687" height="619" alt="image" src="https://github.com/user-attachments/assets/5c01b97f-06fb-496b-8cb0-0236e2436b91" />
 
-<img width="684" height="688" alt="image" src="https://github.com/user-attachments/assets/9a1d8ebe-d401-4913-8f20-cb45fd4410a3" />
+<img width="686" height="932" alt="image" src="https://github.com/user-attachments/assets/6457bb32-30ff-4113-9b68-921ce96d2cdf" />
 
-<img width="685" height="573" alt="image" src="https://github.com/user-attachments/assets/5d584b4f-e131-4f39-be82-532376ccdffc" />
+<img width="682" height="663" alt="image" src="https://github.com/user-attachments/assets/771efff6-e3c5-4fb0-bbee-e1f300b6b562" />
 
 <img width="686" height="377" alt="image" src="https://github.com/user-attachments/assets/30f1c185-70d3-472f-9145-68a21ffcabac" />
 
