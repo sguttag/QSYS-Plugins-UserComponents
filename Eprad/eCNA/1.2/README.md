@@ -10,6 +10,9 @@ Version 1.2 adds Eprad QDC-400 (Both conventional and LED lamp) Dimmer Control.
 
 <img width="686" height="930" alt="image" src="https://github.com/user-attachments/assets/c4b9e5bd-4575-4497-9761-f2186dfeb8c5" />
 
+img width="543" height="413" alt="image" src="https://github.com/user-attachments/assets/20605fed-d033-4fe2-8472-43660c6fb5b7" />
+
+
 <img width="685" height="573" alt="image" src="https://github.com/user-attachments/assets/5d584b4f-e131-4f39-be82-532376ccdffc" />
 
 <img width="686" height="377" alt="image" src="https://github.com/user-attachments/assets/30f1c185-70d3-472f-9145-68a21ffcabac" />
