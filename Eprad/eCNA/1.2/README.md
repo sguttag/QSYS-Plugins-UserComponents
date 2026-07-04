@@ -1,0 +1,37 @@
+The Eprad eCNA line of automations are, primarily, designed for cinema applications.  However, they also can be used for general purpose automations where the user needs GPIO with real relays (the smallest unit has 16) as well as Opto-Isolated inputs (the smallest unit has 8).  
+
+This plugin provides a fair amount of control and monitoring of the eCNA line of digital cinema automations (eCNA-5 and eCNA-10). Input and output flags are monitor/controlled which allow for interaction with the physical world.  All Macros may be executed as well as Remote Devices (RDIs).  The eCNA's program function (for running movies in a conventional stepped fashion) is also supported.  
+
+Please see the help file(s) for more detailed descriptions of the functions and interactions. 
+
+Version 1.1 adds has the plugin fetch the user-defined Aux Input and Aux Output names.  
+
+<img width="684" height="614" alt="image" src="https://github.com/user-attachments/assets/776d9b40-75cf-402a-9543-4706c8813bc6" />
+
+<img width="684" height="688" alt="image" src="https://github.com/user-attachments/assets/9a1d8ebe-d401-4913-8f20-cb45fd4410a3" />
+
+<img width="685" height="573" alt="image" src="https://github.com/user-attachments/assets/5d584b4f-e131-4f39-be82-532376ccdffc" />
+
+<img width="686" height="377" alt="image" src="https://github.com/user-attachments/assets/30f1c185-70d3-472f-9145-68a21ffcabac" />
+
+<img width="683" height="783" alt="image" src="https://github.com/user-attachments/assets/b7c7d56e-e040-4a32-ac64-2267b376068c" />
+
+<img width="683" height="557" alt="image" src="https://github.com/user-attachments/assets/764cb9cc-0ce7-462e-bc67-39cc0f794242" />
+
+Copyright ©2026 by Steven Guttag
+
+This Component may be distributed freely.  Use at your own risk. 
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+Any changes by others may be appended but under no circumstances may the 
+original copyright be removed. 
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
