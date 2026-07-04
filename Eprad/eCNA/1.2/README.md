@@ -4,9 +4,9 @@ This plugin provides a fair amount of control and monitoring of the eCNA line of
 
 Please see the help file(s) for more detailed descriptions of the functions and interactions. 
 
-Version 1.1 adds has the plugin fetch the user-defined Aux Input and Aux Output names.  
+Version 1.2 adds Eprad QDC-400 (Both conventional and LED lamp) Dimmer Control. 
 
-<img width="684" height="614" alt="image" src="https://github.com/user-attachments/assets/776d9b40-75cf-402a-9543-4706c8813bc6" />
+<img width="684" height="727" alt="image" src="https://github.com/user-attachments/assets/e97caee6-153a-4cae-a98b-ed633a57f97e" />
 
 <img width="684" height="688" alt="image" src="https://github.com/user-attachments/assets/9a1d8ebe-d401-4913-8f20-cb45fd4410a3" />
 
