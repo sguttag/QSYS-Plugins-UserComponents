@@ -7,7 +7,7 @@ Author: Steve Guttag
 
 The Eprad eCNA plugin is designed to aid in the integration of the Eprad eCNA line of cinema automations. Key features include:
 
-- **I/O Flag Control/Monitor**: Provides full monitoring over the Input and Output flags as well control over the output flags. 
+- **I/O Flag Control/Monitor**: Provides full monitoring over the Input and Output flags as well control over the Output flags. 
 - **Macro Execution**: Provides for direct execution of any of the eCNA's Macros.
 - **RDI Execution**: Provides for the execution of any of the RDI (Remote Devices) command execution.
 - **Program Control and Monitoring**: The eCNA can run a traditional cinema automation program (step through a program one cue at a time).
