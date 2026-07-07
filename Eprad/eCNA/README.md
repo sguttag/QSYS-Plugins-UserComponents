@@ -1,6 +1,7 @@
 # Eprad eCNA Plugin
 
-Version: 1.1.1
+Version: 1.1.1 
+
 Author: Steve Guttag
 
 ## Description
