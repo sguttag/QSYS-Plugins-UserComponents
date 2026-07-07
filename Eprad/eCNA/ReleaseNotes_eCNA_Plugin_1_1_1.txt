@@ -1,6 +1,6 @@
-Eprad eCNA Plugin Release Notes
+# Eprad eCNA Plugin Release Notes
 
-Version 1.1.1 (build 35)
+## Version 1.1.1 (build 35)
 
 Internal fixes pointed out by the Plugin Checker. 
 
