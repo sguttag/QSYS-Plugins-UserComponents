@@ -1,0 +1,30 @@
+Eprad eCNA Plugin Release Notes
+
+Version 1.1.1 (build 35)
+
+Internal fixes pointed out by the Plugin Checker. 
+
+Removed Debug Tab.  
+
+Version 1.1.0 (build 34)
+
+Added Aux Input and Aux Output names.  The plugin obtains the user defined input and output
+names.
+
+Removed the legends from the "Projector" buttons (Dig Proj1, 2 and Slide Projector) so the 
+integrator can use those flags for other things and apply their own legends. 
+
+Version 1.0.1 (build 53):  Minor internal fixes.  
+
+Checks on invalid IP address and internal formatting consistent with Q-SYS plugin standards. 
+The Status pin is also correctly named.  This may impact any designs that update from 1.0.0 that use the Status pin. 
+
+Version 1.0.0 (build 51) 
+
+This is the initial release. 
+See the Help file for operational details. 
+
+
+
+
+
