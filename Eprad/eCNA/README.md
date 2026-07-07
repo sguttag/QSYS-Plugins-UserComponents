@@ -29,7 +29,7 @@ The plugin contains six pages:
 - **NumRDI**: The number of remote devices (RDI) you want to be available. 
 - **PollRate**: The speed of refresh of non-Input/Output status (1-60 seconds; default 30) Mostly a safety since the plugin also receives this information via an automatic update from the eCNA upon a change in state.  
 - **ScrapeRate**: The rate that Input and Output flags are updated (1-60 seconds; 3-second default).  Times below 2-seconds will cause a slow-down of the the eCNA's web-ui.  
-- **Auto Refresh Names**: The plugin will fetch the Aux Input and Aux Output names.  However, if the integrator changes one of those names, the plugin will only update if this setting is set to yes (default = Yes).
+- **Auto Refresh Names**: The plugin will fetch the Aux Input and Aux Output names.  However, if the integrator changes one of those names, the plugin will only (automatically) update if this setting is set to yes (default = Yes).
 
 ## Usage
 
