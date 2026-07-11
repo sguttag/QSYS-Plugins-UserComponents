@@ -1,6 +1,6 @@
 DSS Server Q-SYS Plugin Release Notes
 
-Version 1.0.3 (build 52)
+Version 1.0.3 (build 53)
 Internal fixes, which, among other things fixed the Manual/Scheduled button presentation
 (should be round to continue the theming of round buttons as well as color applied).  
 
