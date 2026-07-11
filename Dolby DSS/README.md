@@ -6,7 +6,7 @@ Below are screenshots of the pages.  Note, the audio processor and CAT745 Mediab
 
 <img width="437" height="668" alt="image" src="https://github.com/user-attachments/assets/b60ba2c2-0bb2-4fb0-aa2f-6cf2fd1c809d" />
 
-<img width="847" height="990" alt="image" src="https://github.com/user-attachments/assets/9a46b79b-52f1-4221-8060-af2c1e38ec09" />
+<img width="849" height="1042" alt="image" src="https://github.com/user-attachments/assets/8b8aae44-b924-42d2-93c2-73a47fbcbab4" />
 
 <img width="644" height="881" alt="image" src="https://github.com/user-attachments/assets/0086fd7a-c78f-440e-9970-ced120b1898b" />
 
