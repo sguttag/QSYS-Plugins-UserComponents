@@ -1,0 +1,14 @@
+DSS Server Q-SYS Plugin Release Notes
+
+Version 1.0.3 (build 52)
+Internal fixes, which, among other things fixed the Manual/Scheduled button presentation
+(should be round to continue the theming of round buttons as well as color applied).  
+
+Version 1.0.2 (build 49)
+Bug fix:  Resolves the situation where both Unselected and Stopped could be true at the same time.  This version never distributed.
+
+Version 1.0.1 (build 47)
+Internal code formatting; no functional changes.
+
+Version 1.0.0 (build 46)
+Initial release. 
