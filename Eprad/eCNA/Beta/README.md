@@ -12,6 +12,7 @@ The Eprad eCNA plugin is designed to aid in the integration of the Eprad eCNA li
 - **Macro Execution**: Provides for direct execution of any of the eCNA's Macros.
 - **RDI Execution**: Provides for the execution of any of the RDI (Remote Devices) command execution.
 - **Program Control and Monitoring**: The eCNA can run a traditional cinema automation program (step through a program one cue at a time).
+- **Eprad Dimmer Monitoring and Control**: As of version 1.2, the plugin can now monitor and control an Eprad QDC-400 type dimmer.
 
 ## Pages
 
