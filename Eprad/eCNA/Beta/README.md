@@ -32,8 +32,8 @@ The plugin contains upto sevem pages:
 - **ScrapeInterval**: The rate that Input and Output flags are updated (0.5-20 seconds; 2-second default).  Times below 1.3-seconds will cause a slow-down of the the eCNA's web-ui.
 - **LightPollInterval**: New for 1.2.  Sets the rate at which the dimmer controls are polled for status (0.5 - 20 seconds; 3-second default).
 - **EnableQDC_Lighting**: When set to Yes (default is No) the Dimmer Control Tab is revealed.
-- **QDCZones**: Set the number of lighting Zones for the QDC-400 dimmer (default is 2; House and Stage).
-- **QDCChannels**: Set the number of QDC-400 dimmer channels (default is 2). 
+- **QDCZones**: Set the number of lighting Zones (1-16) for the QDC-400 dimmer (default is 2; House and Stage).
+- **QDCChannels**: Set the number of QDC-400 dimmer channels (1-16) (default is 2). 
 - **Auto Refresh Names**: The plugin will fetch the Aux Input and Aux Output names.  However, if the integrator changes one of those names, the plugin will only (automatically) update if this setting is set to yes (default = Yes).
 - **Show Debug**:  Standard Q-SYS Debug window.
 
