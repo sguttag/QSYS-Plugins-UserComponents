@@ -64,7 +64,7 @@ Version 1.2 adds optional monitoring and control of Eprad QDC-400 dimmer lightin
 
 <img width="684" height="727" alt="image" src="https://github.com/user-attachments/assets/e97caee6-153a-4cae-a98b-ed633a57f97e" />
 
-<img width="686" height="930" alt="image" src="https://github.com/user-attachments/assets/c4b9e5bd-4575-4497-9761-f2186dfeb8c5" />
+<img width="799" height="933" alt="image" src="https://github.com/user-attachments/assets/0442da97-67ad-49a4-bf51-d21919a54859" />
 
 <img width="830" height="536" alt="image" src="https://github.com/user-attachments/assets/8a90502b-27dc-452f-a1f0-1d5764b592cf" />
 
