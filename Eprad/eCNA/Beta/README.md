@@ -16,7 +16,7 @@ The Eprad eCNA plugin is designed to aid in the integration of the Eprad eCNA li
 
 ## Pages
 
-The plugin contains up to sevem pages:
+The plugin contains up to seven pages:
 
 1. **Setup**: Enter IP address and desired port (defaults to 13002).  The Model and firmware version number is retrieved.
 2. **Outputs**: Output Flag status and Control.  Aux Output Names are fetched from the eCNA.
