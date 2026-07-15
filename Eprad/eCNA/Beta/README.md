@@ -16,7 +16,7 @@ The Eprad eCNA plugin is designed to aid in the integration of the Eprad eCNA li
 
 ## Pages
 
-The plugin contains upto sevem pages:
+The plugin contains up to sevem pages:
 
 1. **Setup**: Enter IP address and desired port (defaults to 13002).  The Model and firmware version number is retrieved.
 2. **Outputs**: Output Flag status and Control.  Aux Output Names are fetched from the eCNA.
@@ -51,14 +51,14 @@ The plugin contains upto sevem pages:
 
 Version 1.2 adds optional monitoring and control of Eprad QDC-400 dimmer lighting boards, replicating the eCNA's own Status: Light Control web page, plus several changes to existing behavior:
 
-- **QDC-400 Dimmer Lighting** — new optional Dimmer Control page with per-zone preset buttons (Up/Down/Mid1/Mid2/None), an offset fader with dedicated increase/decrease step buttons, and animated per-channel level meters. See QDC-400 Dimmer Lighting.
-- Scrape Interval — accepts fractional seconds (e.g. 1.6), not just whole seconds. See Properties.
-- Light Poll Interval — new property controlling how often dimmer status is polled, independently of Scrape Interval. See Light Poll Interval.
-- Faster Digital Projector status — the four Digital Projector Power/Video buttons now update immediately from the eCNA's own unsolicited event reports rather than waiting on the next scrape. See Digital Projectors.
+- **QDC-400 Dimmer Lighting** — new optional Dimmer Control page with per-zone preset buttons (Up/Down/Mid1/Mid2/None), an offset fader with dedicated increase/decrease step buttons, and animated per-channel level meters.
+- Scrape Interval — accepts fractional seconds (e.g. 1.6), not just whole seconds.
+- Light Poll Interval — new property controlling how often dimmer status is polled, independently of Scrape Interval.
+- Faster Digital Projector status — the four Digital Projector Power/Video buttons now update immediately from the eCNA's own unsolicited event reports rather than waiting on the next scrape.
 - Poll Rate removed — no longer a configurable property; the plugin now uses a fixed 45-second rate.
-- Auto Refresh Names removed — input/output names (and, when dimmer lighting is enabled, zone names and QDC board detection) are now fetched once on connect and otherwise only on demand. See Refresh Setup Data.
+- Auto Refresh Names removed — input/output names (and, when dimmer lighting is enabled, zone names and QDC board detection) are now fetched once on connect and otherwise only on demand.
 - Refresh buttons consolidated — the separate Refresh Input Names / Refresh Output Names buttons have been replaced by a single Refresh Setup Data button on the Setup page.
-- Debug tab removed — the Show Debug Tab property, its Debug page, and the Last_Tx/Last_Rx/Last_Error pins are gone; everything they showed is already in the Q-SYS Debug window. See Show Debug Tab under Properties if you had anything wired to those specific pins.
+- Debug tab removed — the Show Debug Tab property, its Debug page, and the Last_Tx/Last_Rx/Last_Error pins are gone; everything they showed is already in the Q-SYS Debug window.
 
 ## Images 
 
