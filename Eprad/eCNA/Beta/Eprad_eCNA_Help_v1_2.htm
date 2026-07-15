@@ -145,7 +145,7 @@
 <body>
     <div role="main">
         <h1>Eprad eCNA Cinema Automation Plugin</h1>
-        <p class="Version">Version 1.2 &nbsp;&nbsp;|&nbsp;&nbsp; Build 46</p>
+        <p class="Version">Version 1.2 &nbsp;&nbsp;|&nbsp;&nbsp; Build 47</p>
 
         <p>Use this plugin to monitor and control an Eprad eCNA Cinema Automation system from within your Q-SYS designs. The plugin communicates over two independent channels: the CAI (Cinema Automation Interface) ASCII TCP protocol for commands and status, and a direct HTTP connection for I/O flag detail and, optionally, Eprad QDC-400 dimmer lighting.</p>
 
@@ -222,7 +222,7 @@
         <p>Boolean (default off). Turns on monitoring and control of Eprad QDC-400 dimmer lighting boards, adding the <span class="GUI_Callout">Dimmer Control</span> page and its associated controls. See <a href="#Dimmer">QDC-400 Dimmer Lighting</a> for full details.</p>
 
         <h4 class="BridgeHead">QDC Zones</h4>
-        <p>Integer, 2–16 (default 2). Number of lighting zones to display on the Dimmer Control page — Zone 1 (House) and Zone 2 (Stage) are always present; zones above 2 are user-defined on the eCNA. This property is always shown regardless of the <span class="GUI_Callout">Enable QDC Lighting</span> setting, but only takes effect once that property is turned on.</p>
+        <p>Integer, 1–16 (default 2). Number of lighting zones to display on the Dimmer Control page. Zone 1 is always House; Zone 2, if included, is always Stage; any zones above 2 are user-defined on the eCNA. Set to 1 for a House-only installation. This property is always shown regardless of the <span class="GUI_Callout">Enable QDC Lighting</span> setting, but only takes effect once that property is turned on.</p>
 
         <h4 class="BridgeHead">QDC Channels</h4>
         <p>Integer, 1–16 (default 2). Number of dimmer channel meters to display on the Dimmer Control page. A single QDC-400 board supports 4 channels; more than one board can be daisy-chained. This property is always shown regardless of the <span class="GUI_Callout">Enable QDC Lighting</span> setting, but only takes effect once that property is turned on.</p>
