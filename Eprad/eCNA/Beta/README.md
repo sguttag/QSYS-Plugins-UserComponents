@@ -76,20 +76,11 @@ Version 1.2 adds optional monitoring and control of Eprad QDC-400 dimmer lightin
 
 <img width="683" height="557" alt="image" src="https://github.com/user-attachments/assets/764cb9cc-0ce7-462e-bc67-39cc0f794242" />
 
-Copyright ©2026 by Steven Guttag
+## Requirements
 
-This Component may be distributed freely.  Use at your own risk. 
+- Q-SYS Designer 9.0 or higher (Primary development was on 9.13.1 LTS and checked on 9.4.8 LTS and 10.4.0)
+- Q-SYS Core devices
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+## Support
 
-Any changes by others may be appended but under no circumstances may the 
-original copyright be removed. 
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+This software is being supplied as-is and without support.  However, you may request support or changes to the author.  Please see the standard MIT License and Help File for more details.  
