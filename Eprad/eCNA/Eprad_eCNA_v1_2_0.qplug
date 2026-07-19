@@ -13,7 +13,7 @@
 -- HTTP scrape/queue architecture from v1.1, not the CAI socket.
 
 PluginInfo = {
-  Name         = "Eprad~eCNA v1.2.0.48",
+  Name         = "Eprad~eCNA v1.2.0",
   Manufacturer = "STG",
   Version      = "1.2.0.48",
   Id           = "8cd1a925-90ba-4640-8de9-886632d1e242",
