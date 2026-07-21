@@ -1,6 +1,6 @@
 # Eprad eCNA Plugin
 
-Version: 1.2
+Version: 1.3
 
 Author: Steve Guttag
 
@@ -13,10 +13,11 @@ The Eprad eCNA plugin is designed to aid in the integration of the Eprad eCNA li
 - **RDI Execution**: Provides for the execution of any of the RDI (Remote Devices) command execution.
 - **Program Control and Monitoring**: The eCNA can run a traditional cinema automation program (step through a program one cue at a time).
 - **Eprad Dimmer Monitoring and Control**: As of version 1.2, the plugin can now monitor and control an Eprad QDC-400 type dimmer.
+- **Eprad nanoHost Monitoring**: As of version 1.3, the plugin can now monitor the Eprad nanoHost.
 
 ## Pages
 
-The plugin contains up to seven pages:
+The plugin contains up to eight pages:
 
 1. **Setup**: Enter IP address and desired port (defaults to 13002).  The Model and firmware version number is retrieved.
 2. **Outputs**: Output Flag status and Control.  Aux Output Names are fetched from the eCNA.
@@ -24,7 +25,8 @@ The plugin contains up to seven pages:
 4. **Inputs**: Input Flag Status.  Aux Input Flag Names are fetched from the eCNA.
 5. **Macros**: Macro Execution Trigger Buttons.
 6. **RDI**: RDI Execution Trigger Buttons.
-7. **Program**: eCNA Program control and Mmonitoring. 
+7. **Program**: eCNA Program control and Mmonitoring.
+8. **NanoHost**: Option(Configured in Properties) to monitor the Eprad nanoHost (show schedules).  
 
 ## Properties
 
@@ -35,7 +37,7 @@ The plugin contains up to seven pages:
 - **EnableQDC_Lighting**: When set to Yes (default is No) the Dimmer Control Tab is revealed.
 - **QDCZones**: Set the number of lighting Zones (1-16) for the QDC-400 dimmer (default is 2; House and Stage).
 - **QDCChannels**: Set the number of QDC-400 dimmer channels (1-16) (default is 2). 
-- **Auto Refresh Names**: The plugin will fetch the Aux Input and Aux Output names.  However, if the integrator changes one of those names, the plugin will only (automatically) update if this setting is set to yes (default = Yes).
+- **EnableNanoHost**: When set to YEs (default is No) the NanoHost tab is revealed. 
 - **Show Debug**:  Standard Q-SYS Debug window.
 
 ## Usage
