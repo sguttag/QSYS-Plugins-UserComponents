@@ -35,7 +35,6 @@ The plugin contains up to seven pages:
 - **EnableQDC_Lighting**: When set to Yes (default is No) the Dimmer Control Tab is revealed.
 - **QDCZones**: Set the number of lighting Zones (1-16) for the QDC-400 dimmer (default is 2; House and Stage).
 - **QDCChannels**: Set the number of QDC-400 dimmer channels (1-16) (default is 2). 
-- **Auto Refresh Names**: The plugin will fetch the Aux Input and Aux Output names.  However, if the integrator changes one of those names, the plugin will only (automatically) update if this setting is set to yes (default = Yes).
 - **Show Debug**:  Standard Q-SYS Debug window.
 
 ## Usage
