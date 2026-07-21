@@ -1,0 +1,82 @@
+Eprad eCNA Plugin Release Notes
+
+Version 1.3.0
+Added Eprad nanoHost capability. 
+Added screen number to the Setup Page. 
+
+Version 1.2.0
+
+The main feature addition is Dimmer Control page for use with Eprad QDC-400 series of dimmers.
+
+In addition to being able to control all 16 zones, all 16 channels (if so equipped), it provides
+monitoring of output level (textually and in meter form).
+
+Dimmer Offset percentage can be monitored and adjusted via slider, bump buttons, or input via
+text. 
+
+To minimize the impact on other functions and the responsiveness of the eCNA Web UI, the meters
+utilize an internal timing scheme that will correct to the actual level, if there is a 
+difference.  Their movement has been optimized for "typical use-cases."  So, if the dimmer
+offset is controlled manually (outside of the plugin), a jumpy update is normal/unavoidable.
+
+The manual configuration refresh buttons (of previous versions have been consolidated into a
+single button on the Setup page.  This will minimize the impact on the eCNA's web UI as well as 
+the overall responsiveness of the plugin.  The plugin will gather all of the information on
+first connection. However, if configurations (input/output names, dimmer zones...etc.) change
+after the plugin connects, pressing the Refresh Setup Data button should update all pages with 
+the current configuration.  
+
+The resolution of the Scrape Poll Rate precision has been changed to a tenth of a second with 
+the range of 0.5 - 20-seconds.  Times less than 1.3 should be avoided with 2-seconds remaining
+the default. The faster we poll to the eCNA, the slower the eCNA will be at refreshing its web
+pages. The trade off is how fast the plugin will update its various data.  
+
+If one is updating from a previous version, Q-SYS will not allow the change from integer to float
+for the Scrape rates.  As such, its name was changed to avoid the need to rip out
+and replace existing versions of the plugin. 
+
+The "Debug" Tab (option set in Properties) and associated pins have been removed.  Use the
+normal Q-SYS Debug window.  
+
+The Digital Projector (1 and 2) on the Output Page now refresh via unsolicited eCNA responses
+rather than by polling (polling is still used to ensure they are synced).  This will allow them
+to update significantly faster than via polling.  If desired, repurpose them if your project
+needs a very quickly updated output from the eCNA.  
+
+The Poll Interval (Poll Timer) is now internally fixed at 45-seconds and no longer appears in
+properties.  
+
+An internal poll priority has been adjusted for an improved input/output flag update speed. 
+
+
+Version 1.1.2 (build 36)
+
+Fixed bug for Lens Flat command (status was correct).
+
+Version 1.1.1 (build 35)
+
+Internal fixes pointed out by the Plugin Checker.
+
+Version 1.1.0 (build 34)
+
+Added Aux Input and Aux Output names.  The plugin obtains the user defined input and output
+names.
+
+Removed the legends from the "Projector" buttons (Dig Proj1, 2 and Slide Projector) so the 
+integrator can use those flags for other things and apply their own legends. 
+
+Version 1.0.1 (build 53):  Minor internal fixes.  
+
+Checks on invalid IP address and internal formatting consistent with Q-SYS plugin standards. 
+The Status pin is also correctly named.  This may impact any designs that update from 1.0.0 
+that use the Status pin. 
+
+Version 1.0.0 (build 51) 
+
+This is the initial release. 
+See the Help file for operational details. 
+
+
+
+
+
