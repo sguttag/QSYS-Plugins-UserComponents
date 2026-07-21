@@ -37,7 +37,7 @@ The plugin contains up to eight pages:
 - **EnableQDC_Lighting**: When set to Yes (default is No) the Dimmer Control Tab is revealed.
 - **QDCZones**: Set the number of lighting Zones (1-16) for the QDC-400 dimmer (default is 2; House and Stage).
 - **QDCChannels**: Set the number of QDC-400 dimmer channels (1-16) (default is 2). 
-- **EnableNanoHost**: When set to YEs (default is No) the NanoHost tab is revealed. 
+- **EnableNanoHost**: When set to Yes (default is No) the NanoHost tab is revealed. 
 - **Show Debug**:  Standard Q-SYS Debug window.
 
 ## Usage
