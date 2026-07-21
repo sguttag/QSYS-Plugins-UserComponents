@@ -49,18 +49,10 @@ The plugin contains up to eight pages:
 5. Expose the desired Input/Output pins to integrate the automation within a Q-SYS design.
 6. Configure Eprad QDC-400 dimmer properties to mach the installed dimmer.  
 
-## What's New in 1.2
+## What's New in 1.3
 
-Version 1.2 adds optional monitoring and control of Eprad QDC-400 dimmer lighting boards, replicating the eCNA's own Status: Light Control web page, plus several changes to existing behavior:
-
-- **QDC-400 Dimmer Lighting** — new optional Dimmer Control page with per-zone preset buttons (Up/Down/Mid1/Mid2/None), an offset fader with dedicated increase/decrease step buttons, and animated per-channel level meters.
-- Scrape Interval — accepts fractional seconds (e.g. 1.6), not just whole seconds.
-- Light Poll Interval — new property controlling how often dimmer status is polled, independently of Scrape Interval.
-- Faster Digital Projector status — the four Digital Projector Power/Video buttons now update immediately from the eCNA's own unsolicited event reports rather than waiting on the next scrape.
-- Poll Rate removed — no longer a configurable property; the plugin now uses a fixed 45-second rate.
-- Auto Refresh Names removed — input/output names (and, when dimmer lighting is enabled, zone names and QDC board detection) are now fetched once on connect and otherwise only on demand.
-- Refresh buttons consolidated — the separate Refresh Input Names / Refresh Output Names buttons have been replaced by a single Refresh Setup Data button on the Setup page.
-- Debug tab removed — the Show Debug Tab property, its Debug page, and the Last_Tx/Last_Rx/Last_Error pins are gone; everything they showed is already in the Q-SYS Debug window.
+- Added Eprad Nano Host monitoring.
+- Screen number is fetched on the Setup Page.
 
 ## Images 
 
@@ -77,6 +69,9 @@ Version 1.2 adds optional monitoring and control of Eprad QDC-400 dimmer lightin
 <img width="683" height="783" alt="image" src="https://github.com/user-attachments/assets/b7c7d56e-e040-4a32-ac64-2267b376068c" />
 
 <img width="683" height="557" alt="image" src="https://github.com/user-attachments/assets/764cb9cc-0ce7-462e-bc67-39cc0f794242" />
+
+<img width="630" height="672" alt="image" src="https://github.com/user-attachments/assets/21d7d828-e962-4d12-8c24-b3b67bda06b8" />
+
 
 ## Requirements
 
