@@ -56,7 +56,7 @@ The plugin contains up to eight pages:
 
 ## Images 
 
-<img width="684" height="727" alt="image" src="https://github.com/user-attachments/assets/e97caee6-153a-4cae-a98b-ed633a57f97e" />
+<img width="802" height="763" alt="image" src="https://github.com/user-attachments/assets/0815f195-edf5-4d47-ad0b-dbe6a745e7b7" />
 
 <img width="799" height="933" alt="image" src="https://github.com/user-attachments/assets/0442da97-67ad-49a4-bf51-d21919a54859" />
 
