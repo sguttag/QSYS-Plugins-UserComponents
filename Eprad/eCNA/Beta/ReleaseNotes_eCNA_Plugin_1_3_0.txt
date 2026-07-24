@@ -4,7 +4,7 @@ Version 1.3.0
 Added Eprad nanoHost capability. 
 Added screen number to the Setup Page. 
 
-Version 1.2.0
+Version 1.2.0 (build 48)
 
 The main feature addition is Dimmer Control page for use with Eprad QDC-400 series of dimmers.
 
