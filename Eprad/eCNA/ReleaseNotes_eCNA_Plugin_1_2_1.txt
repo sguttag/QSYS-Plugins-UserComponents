@@ -1,5 +1,12 @@
 Eprad eCNA Plugin Release Notes
 
+Version 1.2.1 (build 49)
+
+Implemented hiding of the Dimmer Zones and Channels when the QDC-400 Dimmers are not
+enabled.  
+
+Internal checks/corrections that do not impact performance. 
+
 Version 1.2.0 (build 48)
 
 The main feature addition is Dimmer Control page for use with Eprad QDC-400 series of dimmers.
