@@ -21,6 +21,36 @@
 -- see NANO_POLL_RATE below). Nothing on this page causes any action; it is
 -- purely informational.
 --
+-- v1.3.0.51: comment-only. Corrects the internal documentation below, which
+-- had claimed the disappearing-controls failures were caused by a Q-SYS
+-- local-variable ceiling and that runtime code placement was load-bearing.
+-- Both claims were wrong. A 31-file correlation study (every build tested on
+-- hardware during the Day Start work) showed a perfect, zero-exception match:
+-- every build that FAILED had at least one apostrophe in a GetControls
+-- Description string; every build that WORKED had none. No Lua logic changed
+-- in this build.
+--
+-- v1.3.0.50: Day Start layout reformatted to match the Dimmer Control page's
+-- Zone_Offset fader/text/step-button arrangement (offset text and -/+ step
+-- buttons to the right of the fader, an "Offset (minutes)" header above the
+-- fader, and the Day Start/Trigger LEDs stacked to the fader's left, Day
+-- Start above Trigger), per Steve, for visual consistency between pages.
+--
+-- v1.3.0.49: Fixes the long-running "all controls disappear when NanoHost is
+-- enabled" failure. Root cause: an apostrophe in a GetControls Description
+-- ("the first show's StartTime"). Q-SYS silently drops EVERY control on
+-- EVERY page at design time when one is present -- no error, before
+-- emulation. Removing the apostrophe fixed it. NEVER use an apostrophe in
+-- any GetControls/GetControlLayout string value.
+--
+-- v1.3.0.43: Adds the first of four planned flag-type outputs -- Day Start
+-- (LED + paired trigger output, with an adjustable -180..+60 minute offset:
+-- fader + editable text + hold-to-repeat bump buttons). Day Start is true
+-- once the first show of the day (FS) is also the active performance
+-- (Show Start) AND time of day has reached that show StartTime plus the
+-- offset; it stays true until FS goes low, and the trigger pulses once on
+-- the rising edge. Field-confirmed on real hardware against a live schedule.
+--
 -- v1.3.0.32: two timing changes, per Steve. (1) NANO_POLL_RATE reduced from
 -- 150s (2.5 min) to 120s (2 min). (2) forceEarlyNanoHostRefresh's delay
 -- reduced from 4s to 3s.
@@ -335,15 +365,15 @@
 -- screen. Per Steve: the eCNA-5 and eCNA-10 use the same CPU and the same
 -- command set, so this is treated as confirmed for eCNA-10 too, not merely
 -- a hint -- no separate eCNA-10 capture needed for the upper (flags/timers)
--- section. The lower "shows schedule" table (PosData/Screen, variable row
--- count) still isn't implemented yet -- its structure wasn't fully spelled
--- out by the reference source (generic/dynamic column-building), so that
--- part still benefits from a real sample page once available, per Steve.
+-- section. The lower "shows schedule" table (<Screen>, variable row count)
+-- IS implemented -- see extractShows() below -- confirmed against a real
+-- rtmandata.xml capture and shipping/working since early in the Show
+-- Schedule work.
 
 PluginInfo = {
-  Name         = "Eprad~eCNA v1.3.0.32",
+  Name         = "Eprad~eCNA v1.3.0.65",
   Manufacturer = "STG",
-  Version      = "1.3.0.32",
+  Version      = "1.3.0.65",
   Id           = "8cd1a925-90ba-4640-8de9-886632d1e242",
   Description  = "Controls the Eprad eCNA Cinema Automation system via the CAI ASCII TCP interface, with optional Eprad QDC dimmer lighting monitoring/control and optional Eprad nanoHost POS management data display.",
   ShowDebug    = true,
@@ -370,8 +400,14 @@ local function buildPageList(props)
   local enableQDC = props["Enable_QDC_Lighting"] and props["Enable_QDC_Lighting"].Value or false
   if enableQDC then table.insert(pages, "Dimmer Control") end
   table.insert(pages, "Inputs")
-  local numMacros  = props["Num_Macros"]  and props["Num_Macros"].Value  or 50
-  local numRDI     = props["Num_RDI"]     and props["Num_RDI"].Value     or 5
+  -- v1.3.0.63 BUG FIX: coerce with tonumber() at the read boundary. Lua 5.3
+  -- raises a runtime error comparing a string to a number relationally (the
+  -- `> 0` checks below), and Q-SYS has been observed to hand back property
+  -- Values as strings in some cases -- this guarantees a real number (or
+  -- falls back to the default if the value is missing/non-numeric) no
+  -- matter what type Q-SYS actually delivers.
+  local numMacros  = tonumber(props["Num_Macros"]  and props["Num_Macros"].Value)  or 50
+  local numRDI     = tonumber(props["Num_RDI"]     and props["Num_RDI"].Value)     or 5
   if numMacros > 0 then table.insert(pages, "Macros") end
   if numRDI    > 0 then table.insert(pages, "RDI")    end
   table.insert(pages, "Program")
@@ -404,8 +440,11 @@ end
 -- ============================================================
 function GetControls(props)
   local ctrls = {}
-  local numMacros = props["Num_Macros"] and props["Num_Macros"].Value or 50
-  local numRDI    = props["Num_RDI"]    and props["Num_RDI"].Value    or 5
+  -- v1.3.0.63 BUG FIX: see buildPageList's identical comment above -- tonumber()
+  -- guarantees a real number for the `> 0` checks and the Count= fields below,
+  -- regardless of whether Q-SYS hands back the property Value as a string.
+  local numMacros = tonumber(props["Num_Macros"] and props["Num_Macros"].Value) or 50
+  local numRDI    = tonumber(props["Num_RDI"]    and props["Num_RDI"].Value)    or 5
   local enableQDC, qZones, qChannels = qdcConfig(props)
 
   -- Setup / Connection
@@ -612,6 +651,39 @@ function GetControls(props)
     table.insert(ctrls, { Name="NanoHost_Show_End",   ControlType="Indicator", IndicatorType="Led", Count=MAX_SHOWS, UserPin=true, PinStyle="Output", Description="Show Schedule marker: Show End (currently-airing performance)" })
     table.insert(ctrls, { Name="NanoHost_Show_LS",    ControlType="Indicator", IndicatorType="Led", Count=MAX_SHOWS, UserPin=true, PinStyle="Output", Description="Show Schedule marker: Last Show Start" })
     table.insert(ctrls, { Name="NanoHost_Show_LE",    ControlType="Indicator", IndicatorType="Led", Count=MAX_SHOWS, UserPin=true, PinStyle="Output", Description="Show Schedule marker: Last Show End" })
+    table.insert(ctrls, { Name="NanoHost_DayStart", ControlType="Indicator", IndicatorType="Led", Count=1, UserPin=true, PinStyle="Output", Description="Day Start: true from (first show StartTime + offset) until FS goes low" })
+    table.insert(ctrls, { Name="NanoHost_DayStartOffset", ControlType="Knob", ControlUnit="Integer", Count=1, UserPin=true, PinStyle="Both", Min=-180, Max=60, Description="Day Start offset from the first show StartTime, minutes (-180 to +60)" })
+    table.insert(ctrls, { Name="NanoHost_DayStart_Trigger", ControlType="Indicator", IndicatorType="Led", Count=1, UserPin=true, PinStyle="Output", Description="Pulses once (rising edge) when Day Start turns true" })
+    table.insert(ctrls, { Name="NanoHost_DayStartOffset_Text", ControlType="Text", Count=1, UserPin=true, PinStyle="Both", Description="Day Start offset, minutes (editable), -180 to +60" })
+    table.insert(ctrls, { Name="NanoHost_DayStartOffset_Dec", ControlType="Button", ButtonType="Momentary", Count=1, UserPin=true, PinStyle="Both", Description="Decrease Day Start offset by 1 minute; hold to repeat" })
+    table.insert(ctrls, { Name="NanoHost_DayStartOffset_Inc", ControlType="Button", ButtonType="Momentary", Count=1, UserPin=true, PinStyle="Both", Description="Increase Day Start offset by 1 minute; hold to repeat" })
+    table.insert(ctrls, { Name="NanoHost_DayEnd", ControlType="Indicator", IndicatorType="Led", Count=1, UserPin=true, PinStyle="Output", Description="Day End: true from (last show StartTime + RunTime + offset) until LE goes low" })
+    table.insert(ctrls, { Name="NanoHost_DayEndOffset", ControlType="Knob", ControlUnit="Integer", Count=1, UserPin=true, PinStyle="Both", Min=-60, Max=240, Description="Day End offset from the last show StartTime plus RunTime, minutes (-60 to +240)" })
+    table.insert(ctrls, { Name="NanoHost_DayEnd_Trigger", ControlType="Indicator", IndicatorType="Led", Count=1, UserPin=true, PinStyle="Output", Description="Pulses once (rising edge) when Day End turns true" })
+    table.insert(ctrls, { Name="NanoHost_DayEndOffset_Text", ControlType="Text", Count=1, UserPin=true, PinStyle="Both", Description="Day End offset, minutes (editable), -60 to +240" })
+    table.insert(ctrls, { Name="NanoHost_DayEndOffset_Dec", ControlType="Button", ButtonType="Momentary", Count=1, UserPin=true, PinStyle="Both", Description="Decrease Day End offset by 1 minute; hold to repeat" })
+    table.insert(ctrls, { Name="NanoHost_DayEndOffset_Inc", ControlType="Button", ButtonType="Momentary", Count=1, UserPin=true, PinStyle="Both", Description="Increase Day End offset by 1 minute; hold to repeat" })
+    -- First Show End: now has a state LED (added per Steve, matching Day
+    -- Start/Day End/Last Show Start), plus the Trigger. Fires/turns on on
+    -- either FE-plus-offset reaching its threshold, or on FE itself dropping
+    -- false first if the offset delay ran long enough to overlap the next
+    -- show; the LED turns off exactly when FE itself goes false (the same
+    -- moment the next show's own Time Before Feature Start reaches 0:00).
+    table.insert(ctrls, { Name="NanoHost_FirstShowEnd", ControlType="Indicator", IndicatorType="Led", Count=1, UserPin=true, PinStyle="Output", Description="First Show End: true once the Trigger conditions are met, until FE goes low" })
+    table.insert(ctrls, { Name="NanoHost_FirstShowEnd_Trigger", ControlType="Indicator", IndicatorType="Led", Count=1, UserPin=true, PinStyle="Output", Description="Pulses once when First Show End conditions are met: FE plus StartTime, RunTime and Offset reached, or FE goes false first" })
+    table.insert(ctrls, { Name="NanoHost_FirstShowEndOffset", ControlType="Knob", ControlUnit="Integer", Count=1, UserPin=true, PinStyle="Both", Min=-60, Max=60, Description="First Show End offset from the first show StartTime plus RunTime, minutes (-60 to +60)" })
+    table.insert(ctrls, { Name="NanoHost_FirstShowEndOffset_Text", ControlType="Text", Count=1, UserPin=true, PinStyle="Both", Description="First Show End offset, minutes (editable), -60 to +60" })
+    table.insert(ctrls, { Name="NanoHost_FirstShowEndOffset_Dec", ControlType="Button", ButtonType="Momentary", Count=1, UserPin=true, PinStyle="Both", Description="Decrease First Show End offset by 1 minute; hold to repeat" })
+    table.insert(ctrls, { Name="NanoHost_FirstShowEndOffset_Inc", ControlType="Button", ButtonType="Momentary", Count=1, UserPin=true, PinStyle="Both", Description="Increase First Show End offset by 1 minute; hold to repeat" })
+    -- Last Show Start: state LED + trigger, same shape as Day Start, but
+    -- gated on LS instead of FS, and with no extra "currently airing" gate
+    -- (per Steve's stated conditions: LS true AND StartTime+Offset true).
+    table.insert(ctrls, { Name="NanoHost_LastShowStart", ControlType="Indicator", IndicatorType="Led", Count=1, UserPin=true, PinStyle="Output", Description="Last Show Start: true from (last show StartTime + offset) until LS goes low" })
+    table.insert(ctrls, { Name="NanoHost_LastShowStartOffset", ControlType="Knob", ControlUnit="Integer", Count=1, UserPin=true, PinStyle="Both", Min=-90, Max=60, Description="Last Show Start offset from the last show StartTime, minutes (-90 to +60)" })
+    table.insert(ctrls, { Name="NanoHost_LastShowStart_Trigger", ControlType="Indicator", IndicatorType="Led", Count=1, UserPin=true, PinStyle="Output", Description="Pulses once (rising edge) when Last Show Start turns true" })
+    table.insert(ctrls, { Name="NanoHost_LastShowStartOffset_Text", ControlType="Text", Count=1, UserPin=true, PinStyle="Both", Description="Last Show Start offset, minutes (editable), -90 to +60" })
+    table.insert(ctrls, { Name="NanoHost_LastShowStartOffset_Dec", ControlType="Button", ButtonType="Momentary", Count=1, UserPin=true, PinStyle="Both", Description="Decrease Last Show Start offset by 1 minute; hold to repeat" })
+    table.insert(ctrls, { Name="NanoHost_LastShowStartOffset_Inc", ControlType="Button", ButtonType="Momentary", Count=1, UserPin=true, PinStyle="Both", Description="Increase Last Show Start offset by 1 minute; hold to repeat" })
   end
 
   return ctrls
@@ -667,10 +739,19 @@ function GetProperties(props)
     -- that; higher values were only ever useful for testing/comparison.
     { Name="LightPoll_Interval", Type="double", Min=0.5, Max=20, Value=3 },
     { Name="Enable_QDC_Lighting", Type="boolean",  Value=false },
-    -- QDC_Zones/QDC_Channels are always shown (not conditionally hidden behind
-    -- Enable_QDC_Lighting) since Q-SYS Designer doesn't reliably redraw the
-    -- properties dialog when the property SET changes reactively. They only
-    -- take effect once Enable_QDC_Lighting=Yes.
+    -- v1.3.0.65: QDC_Zones/QDC_Channels are now conditionally hidden behind
+    -- Enable_QDC_Lighting via RectifyProperties (see below), instead of
+    -- always being shown. The v1.2-era belief that Designer's properties
+    -- dialog didn't reliably redraw on a reactive property-set change was
+    -- retested with a minimal, isolated experiment (RectifyProperties +
+    -- props[Name].IsHidden, same mechanism, no other changes) and it DID
+    -- redraw correctly -- Steve confirmed on the bench. Given this project's
+    -- own history with the apostrophe bug (a single apostrophe in a
+    -- Description silently drops every control on every page, no error --
+    -- see the design notes), it's likely the original v1.2 abandonment was
+    -- actually a syntax violation misattributed to the hiding attempt
+    -- itself, not a real Designer limitation. They only take effect once
+    -- Enable_QDC_Lighting=Yes either way.
     -- v1.2.0.47: Min relaxed from 2 to 1. Zone 1/2 are fixed by the eCNA as
     -- "House"/"Stage", but that's just how the device names them -- nothing
     -- requires an installation to actually use both. A single-zone site
@@ -700,6 +781,19 @@ function RectifyProperties(props)
     if     v < 1  then props["QDC_Channels"].Value = 1
     elseif v > 16 then props["QDC_Channels"].Value = 16 end
   end
+
+  -- v1.3.0.65: hide QDC_Zones/QDC_Channels unless Enable_QDC_Lighting=Yes --
+  -- see the comment above Enable_QDC_Lighting in GetProperties for why this
+  -- is safe now, after being avoided since v1.2. Pattern confirmed against
+  -- the KeyDigital KD-WP8-2+ reference plugin's RectifyProperties, and
+  -- proven on the bench in an isolated experimental build before folding it
+  -- in here.
+  if props["Enable_QDC_Lighting"] then
+    local qdcOn = props["Enable_QDC_Lighting"].Value == true
+    if props["QDC_Zones"]    then props["QDC_Zones"].IsHidden    = not qdcOn end
+    if props["QDC_Channels"] then props["QDC_Channels"].IsHidden = not qdcOn end
+  end
+
   return props
 end
 
@@ -727,8 +821,11 @@ function GetControlLayout(props)
   local graphics = {}
   local pages    = buildPageList(props)
   local CurrentPage = pages[props["page_index"].Value]
-  local numMacros = props["Num_Macros"] and props["Num_Macros"].Value or 50
-  local numRDI    = props["Num_RDI"]    and props["Num_RDI"].Value    or 5
+  -- v1.3.0.63 BUG FIX: see buildPageList's identical comment above -- also
+  -- guards the `for i = 1, numMacros do` / `for dev = 1, numRDI do` loops
+  -- further down, which Lua 5.3 requires to be real numbers.
+  local numMacros = tonumber(props["Num_Macros"] and props["Num_Macros"].Value) or 50
+  local numRDI    = tonumber(props["Num_RDI"]    and props["Num_RDI"].Value)    or 5
   local enableQDC, qZones, qChannels = qdcConfig(props)
 
   local LX  = 10    -- left margin
@@ -1422,10 +1519,8 @@ function GetControlLayout(props)
     -- taller Label rather than being split into two explicit lines (unlike
     -- the top instructions paragraph, where wrapping was avoided out of
     -- caution -- here Steve explicitly asked for wrapping, expecting it's
-    -- likely needed given the combined length). NOT fully confirmed that
-    -- this Label type wraps rather than clips long text -- worth checking
-    -- once this is visible in Designer; if it clips instead of wrapping,
-    -- this would need to go back to two explicit lines.
+    -- likely needed given the combined length). Confirmed working: this
+    -- Label type wraps as expected, flawless in every field test since.
     table.insert(graphics, { Type="Label",
       Text="The Cyan LED and highlighted show indicate which is the active show. The \"POS Ticket Sold\" and \"POS In Show\" Status Flags refer to this show.",
       Position={LX, y}, Size={W-20, 32}, HTextAlign="Left", FontSize=10 })
@@ -1440,6 +1535,107 @@ function GetControlLayout(props)
       Text="For additional information, please see the help file.",
       Position={LX, y}, Size={W-20, 16}, HTextAlign="Left", FontSize=10 })
     y = y + 16
+
+    -- Day Start controls -- formatted to match the Dimmer Control page's
+    -- Zone_Offset styling (fader 120 wide, offset text 40, step buttons 40,
+    -- row height 22), per Steve. Two rows: the Day Start LED sits above the
+    -- Trigger LED, both to the left of the fader; the "Offset (minutes)"
+    -- column header sits above the fader (same pattern as "Offset %" above
+    -- Zone_Offset); the offset text and -/+ step buttons sit to the right of
+    -- the fader, in the same order and spacing as Zone_Offset.
+    y = y + 10
+    hdr(y, 'Day Start', 16)
+    y = y + 20
+    table.insert(graphics, { Type="Label",
+      Text="Set the Offset to the desired lead time before the first show, including your typical preshow length ahead of the posted Start Time.",
+      Position={LX, y}, Size={W-20, 32}, HTextAlign="Left", FontSize=10 })
+    y = y + 32
+    y = y + 8  -- gap before the controls, matching the Key section's own header-to-body spacing
+    lbl(LX, y, 130, 'Day Start:', 14)
+    layout["NanoHost_DayStart"] = { PrettyName="NanoHost~Day Start", Style="Led", IsReadOnly=true, Color="dimgray", Position={LX+135, y+2}, Size={16,16} }
+    textlbl(LX+161, y+2, 120, 'Offset (minutes)', 12, "Center")
+    y = y + 20
+    lbl(LX, y, 130, 'Trigger:', 14)
+    layout["NanoHost_DayStart_Trigger"] = { PrettyName="NanoHost~Day Start Trigger", Style="Led", IsReadOnly=true, Color="dimgray", Position={LX+135, y+3}, Size={16,16} }
+    layout["NanoHost_DayStartOffset"] = { PrettyName="NanoHost~Day Start Offset", Style="Fader", Orientation="Horizontal", Color={72,147,217}, Min=-180, Max=60, Position={LX+161, y}, Size={120, 22} }
+    layout["NanoHost_DayStartOffset_Text"] = { PrettyName="NanoHost~Day Start Offset Text", Style="Text", Position={LX+287, y}, Size={40, 22} }
+    layout["NanoHost_DayStartOffset_Dec"] = { PrettyName="NanoHost~Day Start Offset Decrease", Style="Button", ButtonStyle="Momentary", Legend="-", Position={LX+337, y}, Size={38, 22} }
+    layout["NanoHost_DayStartOffset_Inc"] = { PrettyName="NanoHost~Day Start Offset Increase", Style="Button", ButtonStyle="Momentary", Legend="+", Position={LX+383, y}, Size={38, 22} }
+    y = y + 32
+
+    -- Day End controls -- identical formatting to Day Start above (per
+    -- Steve): fader 120 wide, offset text 40, step buttons 40, row height
+    -- 22. Day End LED above Trigger LED, both left of the fader; "Offset
+    -- (minutes)" header above the fader; offset text and -/+ step buttons
+    -- to the right of the fader.
+    y = y + 10
+    hdr(y, 'Day End', 16)
+    y = y + 20
+    table.insert(graphics, { Type="Label",
+      Text="Set the Offset to allow for normal cooling and content transfers, plus any compensation needed for preshow time ahead of the posted Start Time.",
+      Position={LX, y}, Size={W-20, 32}, HTextAlign="Left", FontSize=10 })
+    y = y + 32
+    y = y + 8  -- gap before the controls, matching the Key section's own header-to-body spacing
+    lbl(LX, y, 130, 'Day End:', 14)
+    layout["NanoHost_DayEnd"] = { PrettyName="NanoHost~Day End", Style="Led", IsReadOnly=true, Color="dimgray", Position={LX+135, y+2}, Size={16,16} }
+    textlbl(LX+161, y+2, 120, 'Offset (minutes)', 12, "Center")
+    y = y + 20
+    lbl(LX, y, 130, 'Trigger:', 14)
+    layout["NanoHost_DayEnd_Trigger"] = { PrettyName="NanoHost~Day End Trigger", Style="Led", IsReadOnly=true, Color="dimgray", Position={LX+135, y+3}, Size={16,16} }
+    layout["NanoHost_DayEndOffset"] = { PrettyName="NanoHost~Day End Offset", Style="Fader", Orientation="Horizontal", Color={72,147,217}, Min=-60, Max=240, Position={LX+161, y}, Size={120, 22} }
+    layout["NanoHost_DayEndOffset_Text"] = { PrettyName="NanoHost~Day End Offset Text", Style="Text", Position={LX+287, y}, Size={40, 22} }
+    layout["NanoHost_DayEndOffset_Dec"] = { PrettyName="NanoHost~Day End Offset Decrease", Style="Button", ButtonStyle="Momentary", Legend="-", Position={LX+337, y}, Size={38, 22} }
+    layout["NanoHost_DayEndOffset_Inc"] = { PrettyName="NanoHost~Day End Offset Increase", Style="Button", ButtonStyle="Momentary", Legend="+", Position={LX+383, y}, Size={38, 22} }
+    y = y + 32
+
+    -- First Show End controls -- now formatted identically to Day
+    -- Start/Day End (state LED above Trigger LED, per Steve's latest
+    -- request): row 1 has the "First Show End:" label and state LED, plus
+    -- the "Offset (minutes)" caption above the fader; row 2 is the Trigger
+    -- row with the fader and step buttons.
+    y = y + 10
+    hdr(y, 'First Show End', 16)
+    y = y + 20
+    table.insert(graphics, { Type="Label",
+      Text="Set the Offset to compensate for Preshow content.",
+      Position={LX, y}, Size={W-20, 16}, HTextAlign="Left", FontSize=10 })
+    y = y + 16
+    y = y + 8  -- gap before the controls, matching the Key section's own header-to-body spacing
+    lbl(LX, y, 130, 'First Show End:', 14)
+    layout["NanoHost_FirstShowEnd"] = { PrettyName="NanoHost~First Show End", Style="Led", IsReadOnly=true, Color="dimgray", Position={LX+135, y+2}, Size={16,16} }
+    textlbl(LX+161, y+2, 120, 'Offset (minutes)', 12, "Center")
+    y = y + 20
+    lbl(LX, y, 130, 'Trigger:', 14)
+    layout["NanoHost_FirstShowEnd_Trigger"] = { PrettyName="NanoHost~First Show End Trigger", Style="Led", IsReadOnly=true, Color="dimgray", Position={LX+135, y+3}, Size={16,16} }
+    layout["NanoHost_FirstShowEndOffset"] = { PrettyName="NanoHost~First Show End Offset", Style="Fader", Orientation="Horizontal", Color={72,147,217}, Min=-60, Max=60, Position={LX+161, y}, Size={120, 22} }
+    layout["NanoHost_FirstShowEndOffset_Text"] = { PrettyName="NanoHost~First Show End Offset Text", Style="Text", Position={LX+287, y}, Size={40, 22} }
+    layout["NanoHost_FirstShowEndOffset_Dec"] = { PrettyName="NanoHost~First Show End Offset Decrease", Style="Button", ButtonStyle="Momentary", Legend="-", Position={LX+337, y}, Size={38, 22} }
+    layout["NanoHost_FirstShowEndOffset_Inc"] = { PrettyName="NanoHost~First Show End Offset Increase", Style="Button", ButtonStyle="Momentary", Legend="+", Position={LX+383, y}, Size={38, 22} }
+    y = y + 32
+
+    -- Last Show Start controls -- same two-row formatting as Day Start/Day
+    -- End (state LED above Trigger LED, both left of the fader; "Offset
+    -- (minutes)" header above the fader; offset text and -/+ step buttons
+    -- to the right), gated on LS instead of FS/LE.
+    y = y + 10
+    hdr(y, 'Last Show Start', 16)
+    y = y + 20
+    table.insert(graphics, { Type="Label",
+      Text="Set the Offset to compensate for the Preshow content.",
+      Position={LX, y}, Size={W-20, 16}, HTextAlign="Left", FontSize=10 })
+    y = y + 16
+    y = y + 8  -- gap before the controls, matching the Key section's own header-to-body spacing
+    lbl(LX, y, 130, 'Last Show Start:', 14)
+    layout["NanoHost_LastShowStart"] = { PrettyName="NanoHost~Last Show Start", Style="Led", IsReadOnly=true, Color="dimgray", Position={LX+135, y+2}, Size={16,16} }
+    textlbl(LX+161, y+2, 120, 'Offset (minutes)', 12, "Center")
+    y = y + 20
+    lbl(LX, y, 130, 'Trigger:', 14)
+    layout["NanoHost_LastShowStart_Trigger"] = { PrettyName="NanoHost~Last Show Start Trigger", Style="Led", IsReadOnly=true, Color="dimgray", Position={LX+135, y+3}, Size={16,16} }
+    layout["NanoHost_LastShowStartOffset"] = { PrettyName="NanoHost~Last Show Start Offset", Style="Fader", Orientation="Horizontal", Color={72,147,217}, Min=-90, Max=60, Position={LX+161, y}, Size={120, 22} }
+    layout["NanoHost_LastShowStartOffset_Text"] = { PrettyName="NanoHost~Last Show Start Offset Text", Style="Text", Position={LX+287, y}, Size={40, 22} }
+    layout["NanoHost_LastShowStartOffset_Dec"] = { PrettyName="NanoHost~Last Show Start Offset Decrease", Style="Button", ButtonStyle="Momentary", Legend="-", Position={LX+337, y}, Size={38, 22} }
+    layout["NanoHost_LastShowStartOffset_Inc"] = { PrettyName="NanoHost~Last Show Start Offset Increase", Style="Button", ButtonStyle="Momentary", Legend="+", Position={LX+383, y}, Size={38, 22} }
+    y = y + 32
   end
 
   -- (The Debug tab that lived here -- Last TX/RX/Error text fields -- was
@@ -1761,7 +1957,7 @@ if Controls then
   local populated = {
     rid = false, rst = false, inNames = false, outNames = false,
     dimmerSetup = false, linScan = false, scrape = false, lightPoll = false,
-    nanoHost = false,  -- v1.3: tracked for visibility/debug only, NOT part of checkFullyPopulated's gate -- see comment below.
+    nanoHost = false,  -- v1.3.0.60: part of checkFullyPopulated's gate when Enable_NanoHost is on -- see comment there.
   }
   local statusIsOK = false
 
@@ -1819,6 +2015,613 @@ if Controls then
   local NANO_TICK      = 1      -- seconds per local extrapolation tick
   local NANO_TIME_MAX  = 255*60 + 59  -- 15359s -- the eCNA's own observed time-field ceiling (255:59)
 
+  -- ===== Day Start =====
+  -- NOTE ON PLACEMENT: earlier builds carried a comment here claiming this
+  -- code MUST be declared early in the "if Controls" block because of a
+  -- Q-SYS local-variable ceiling. That was WRONG -- disproven by a 31-file
+  -- correlation study (see the design notes). The real cause of the
+  -- "all controls disappear" failures was an APOSTROPHE in a GetControls
+  -- Description string. Placement is NOT load-bearing; this code simply
+  -- lives here because it works and there is no reason to move it.
+  --
+  -- THE RULE THAT ACTUALLY MATTERS: never put an apostrophe in any
+  -- GetControls/GetControlLayout string value (Description, PrettyName,
+  -- Legend, ...). One apostrophe in one Description silently blanks EVERY
+  -- control on EVERY page at design time -- no error, before emulation.
+  -- Write "the first show StartTime", never "the first show's StartTime".
+  -- Apostrophes in COMMENTS (like this one) are fine -- comments are
+  -- stripped at parse. Semicolons, colons, parentheses, +/- in Descriptions
+  -- are all fine and well-precedented. The three remaining planned flag
+  -- features must respect this.
+  local function parseStartTimeToEpoch(str)
+    if not str or str == "" then return nil end
+    local mo, da, yr, hh, mi, ss = str:match("(%d+)/(%d+)/(%d+) (%d+):(%d+):(%d+)")
+    if not mo then return nil end
+    return os.time({ year = tonumber(yr), month = tonumber(mo), day = tonumber(da),
+      hour = tonumber(hh), min = tonumber(mi), sec = tonumber(ss) })
+  end
+
+  local dayStartWasActive = false
+  local function evaluateDayStart()
+    if not (Controls.NanoHost_DayStart and Controls.NanoHost_DayStartOffset
+        and Controls.NanoHost_Show_FS and Controls.NanoHost_Show_Start and Controls.NanoHost_Show_StartTime) then
+      return
+    end
+    local offsetMin = Controls.NanoHost_DayStartOffset.Value or 0
+    local nowEpoch = os.time()
+    local active = false
+    for i = 1, MAX_SHOWS do
+      local fsCtl = Controls.NanoHost_Show_FS[i]
+      if fsCtl and fsCtl.Boolean then
+        -- Only one row can be FS at a time -- once found, this IS the row
+        -- that determines Day Start, regardless of whether it goes on to
+        -- satisfy the other two conditions, so there's no need to keep
+        -- scanning the rest.
+        local startCtl = Controls.NanoHost_Show_Start[i]
+        local stCtl = Controls.NanoHost_Show_StartTime[i]
+        if startCtl and startCtl.Boolean and stCtl and stCtl.String ~= "" then
+          local epoch = parseStartTimeToEpoch(stCtl.String)
+          if epoch and nowEpoch >= (epoch + offsetMin * 60) then
+            active = true
+          end
+        end
+        break
+      end
+    end
+    Controls.NanoHost_DayStart.Boolean = active
+    Controls.NanoHost_DayStart.Color = active and "green" or "dimgray"
+    if active and not dayStartWasActive and Controls.NanoHost_DayStart_Trigger then
+      -- Rising edge only -- one-shot pulse, not a level output. Boolean
+      -- true then false shortly after, matching how Trigger-style buttons
+      -- elsewhere in this file are driven (there's no separate ctl:Trigger()
+      -- style method used anywhere in this codebase to model instead).
+      Controls.NanoHost_DayStart_Trigger.Boolean = true
+      Timer.CallAfter(function()
+        if Controls.NanoHost_DayStart_Trigger then Controls.NanoHost_DayStart_Trigger.Boolean = false end
+      end, 0.2)
+    end
+    dayStartWasActive = active
+  end
+
+  -- ===== Day End =====
+  -- Mirrors Day Start's scan/evaluate pattern, gated on the LE marker
+  -- (Last Show End -- the eCNA's own report of which row is currently in
+  -- that state) instead of FS, and comparing against StartTime + RunTime +
+  -- offset rather than just StartTime + offset. Per Steve: true once Time
+  -- of Day reaches (LE row's StartTime + RunTime + Day End Offset); goes
+  -- false again once the eCNA itself drops the LE marker (which per Steve
+  -- happens around 255:59 after ShowTime+RunTime -- the eCNA's own
+  -- NANO_TIME_MAX ceiling -- not something this plugin times out on its
+  -- own). Epoch-based arithmetic (not a naive time-of-day string compare)
+  -- so the threshold correctly lands after midnight when StartTime +
+  -- RunTime + Offset crosses into the next calendar day -- same technique
+  -- field-confirmed for Day Start's own midnight-rollover case. Worked
+  -- example from Steve: StartTime 22:00:00, RunTime 180 (min), Offset 180
+  -- (min) -> Day End true and Trigger fires at 04:00:00 the following day.
+  local dayEndWasActive = false
+  local function evaluateDayEnd()
+    if not (Controls.NanoHost_DayEnd and Controls.NanoHost_DayEndOffset
+        and Controls.NanoHost_Show_LE and Controls.NanoHost_Show_StartTime and Controls.NanoHost_Show_RunTime) then
+      return
+    end
+    local offsetMin = Controls.NanoHost_DayEndOffset.Value or 0
+    local nowEpoch = os.time()
+    local active = false
+    for i = 1, MAX_SHOWS do
+      local leCtl = Controls.NanoHost_Show_LE[i]
+      if leCtl and leCtl.Boolean then
+        -- Only one row can be LE at a time -- once found, this IS the row
+        -- that determines Day End, regardless of whether it goes on to
+        -- satisfy the time condition, so there's no need to keep scanning.
+        local stCtl = Controls.NanoHost_Show_StartTime[i]
+        local rtCtl = Controls.NanoHost_Show_RunTime[i]
+        if stCtl and stCtl.String ~= "" and rtCtl and rtCtl.String ~= "" then
+          local epoch = parseStartTimeToEpoch(stCtl.String)
+          local runMin = tonumber(rtCtl.String)
+          if epoch and runMin and nowEpoch >= (epoch + runMin * 60 + offsetMin * 60) then
+            active = true
+          end
+        end
+        break
+      end
+    end
+    Controls.NanoHost_DayEnd.Boolean = active
+    Controls.NanoHost_DayEnd.Color = active and "green" or "dimgray"
+    if active and not dayEndWasActive and Controls.NanoHost_DayEnd_Trigger then
+      -- Rising edge only -- one-shot pulse, same convention as Day Start's
+      -- trigger.
+      Controls.NanoHost_DayEnd_Trigger.Boolean = true
+      Timer.CallAfter(function()
+        if Controls.NanoHost_DayEnd_Trigger then Controls.NanoHost_DayEnd_Trigger.Boolean = false end
+      end, 0.2)
+    end
+    dayEndWasActive = active
+  end
+
+  -- ===== First Show End =====
+  -- Now has a state LED in addition to the Trigger (added per Steve,
+  -- matching Day Start/Day End/Last Show Start). The Trigger still fires
+  -- exactly once per first-show cycle, on whichever of two conditions
+  -- happens first:
+  --   Condition 1: the FE row (First Show End marker) is true AND Time of
+  --     Day has reached that row's StartTime + RunTime + Offset.
+  --   Condition 2: FE itself transitions from true to false BEFORE
+  --     Condition 1 has fired. Per Steve, FE stays true through the gap
+  --     between the first and second shows (Time Between Features), only
+  --     dropping once that gap times out -- i.e. around when the second
+  --     show starts. Condition 2 is therefore a ceiling: if Offset is long
+  --     enough that Condition 1's threshold hasn't been reached by the time
+  --     FE actually drops, fire immediately rather than let a large Offset
+  --     push the Trigger out past the second show's start.
+  -- The state LED turns on with the same criteria as Condition 1, and
+  -- turns off exactly when FE goes false -- per Steve, "which should be at
+  -- the same time as when the Time Before Feature Start counts to 0" (the
+  -- next show starting). It is a LIVE recompute of Condition 1 every tick
+  -- (`active = cond1`, i.e. feActive AND the StartTime+RunTime+Offset
+  -- threshold currently reached) -- deliberately NOT gated by fseTriggered.
+  -- v1.3.0.61 originally computed this as `fseTriggered and feActive`,
+  -- which is a BUG Steve caught by testing: fseTriggered is a one-shot
+  -- latch that only clears on FE's rising edge, so once Condition 1 fired
+  -- under some earlier Offset value, the LED stayed true even after
+  -- raising the Offset to a value whose threshold hadn't been reached yet
+  -- -- it looked like the Offset wasn't being applied at all. Recomputing
+  -- live instead matches how Day Start/Day End/Last Show Start's own state
+  -- LEDs already behave (pure levels, not latches) and lets the LED
+  -- correctly flip back off if the Offset is raised past "now" after
+  -- already going true. In the Condition-2 edge case (FE's drop IS what
+  -- fires the Trigger), `cond1` requires feActive, which is already false
+  -- at that same tick, so the LED still won't visibly light -- correct,
+  -- since by then the next show has already started and there is no
+  -- meaningful "on" window left to show. The Trigger still pulses once
+  -- either way, via its own separate one-shot latch below.
+  -- The "not fired twice" requirement is a one-shot latch (fseTriggered)
+  -- that resets on FE's RISING edge -- i.e. the moment a new first show's
+  -- scheduled window begins (today's, or tomorrow's) -- which is always
+  -- well before either condition could fire for that new cycle.
+  local fseTriggered = false  -- one-shot latch for the current FE cycle
+  local fsePrevFE    = nil    -- previous tick's "is FE true anywhere" state, for edge-detecting FE in both directions
+  local function evaluateFirstShowEnd()
+    if not (Controls.NanoHost_FirstShowEnd and Controls.NanoHost_FirstShowEnd_Trigger and Controls.NanoHost_FirstShowEndOffset
+        and Controls.NanoHost_Show_FE
+        and Controls.NanoHost_Show_StartTime and Controls.NanoHost_Show_RunTime) then
+      return
+    end
+
+    -- Locate the FE row, if any -- only one row can be FE at a time.
+    local feActive, feRow = false, nil
+    for i = 1, MAX_SHOWS do
+      local feCtl = Controls.NanoHost_Show_FE[i]
+      if feCtl and feCtl.Boolean then
+        feActive, feRow = true, i
+        break
+      end
+    end
+
+    -- FE's rising edge -- a new first-show cycle has begun -- clear the
+    -- latch so this cycle's End can fire.
+    if fsePrevFE == false and feActive then
+      fseTriggered = false
+    end
+
+    -- Condition 1: FE row's StartTime + RunTime + Offset reached while FE
+    -- is still true.
+    local cond1 = false
+    if feActive then
+      local offsetMin = Controls.NanoHost_FirstShowEndOffset.Value or 0
+      local stCtl = Controls.NanoHost_Show_StartTime[feRow]
+      local rtCtl = Controls.NanoHost_Show_RunTime[feRow]
+      if stCtl and stCtl.String ~= "" and rtCtl and rtCtl.String ~= "" then
+        local epoch = parseStartTimeToEpoch(stCtl.String)
+        local runMin = tonumber(rtCtl.String)
+        if epoch and runMin and os.time() >= (epoch + runMin * 60 + offsetMin * 60) then
+          cond1 = true
+        end
+      end
+    end
+
+    -- Condition 2: FE was true, now false (edge), and Condition 1 has not
+    -- yet fired -- the normal path whenever Offset is zero or positive.
+    local cond2 = (fsePrevFE == true) and (not feActive) and not fseTriggered
+    fsePrevFE = feActive
+
+    if not fseTriggered and (cond1 or cond2) then
+      fseTriggered = true
+      Controls.NanoHost_FirstShowEnd_Trigger.Boolean = true
+      Timer.CallAfter(function()
+        if Controls.NanoHost_FirstShowEnd_Trigger then Controls.NanoHost_FirstShowEnd_Trigger.Boolean = false end
+      end, 0.2)
+    end
+
+    -- State LED: live recompute of Condition 1, NOT gated by fseTriggered
+    -- -- see the header comment above for why (v1.3.0.61 regression).
+    local active = cond1
+    Controls.NanoHost_FirstShowEnd.Boolean = active
+    Controls.NanoHost_FirstShowEnd.Color = active and "green" or "dimgray"
+  end
+
+  -- ===== Last Show Start =====
+  -- Same shape as evaluateDayStart -- level-based, not a one-shot latch:
+  -- per Steve, "it does not go false until LS goes false," so this simply
+  -- recomputes the gate+threshold every tick, exactly like Day Start/Day
+  -- End do. Gated on LS (Last Show Start marker) instead of FS, with no
+  -- extra "currently airing" check -- per Steve's stated conditions, only
+  -- LS true AND StartTime+Offset true are required.
+  local lastShowStartWasActive = false
+  local function evaluateLastShowStart()
+    if not (Controls.NanoHost_LastShowStart and Controls.NanoHost_LastShowStartOffset
+        and Controls.NanoHost_Show_LS and Controls.NanoHost_Show_StartTime) then
+      return
+    end
+    local offsetMin = Controls.NanoHost_LastShowStartOffset.Value or 0
+    local nowEpoch = os.time()
+    local active = false
+    for i = 1, MAX_SHOWS do
+      local lsCtl = Controls.NanoHost_Show_LS[i]
+      if lsCtl and lsCtl.Boolean then
+        -- Only one row can be LS at a time -- once found, this IS the row
+        -- that determines Last Show Start, regardless of whether it goes
+        -- on to satisfy the time condition, so there's no need to keep
+        -- scanning the rest.
+        local stCtl = Controls.NanoHost_Show_StartTime[i]
+        if stCtl and stCtl.String ~= "" then
+          local epoch = parseStartTimeToEpoch(stCtl.String)
+          if epoch and nowEpoch >= (epoch + offsetMin * 60) then
+            active = true
+          end
+        end
+        break
+      end
+    end
+    Controls.NanoHost_LastShowStart.Boolean = active
+    Controls.NanoHost_LastShowStart.Color = active and "green" or "dimgray"
+    if active and not lastShowStartWasActive and Controls.NanoHost_LastShowStart_Trigger then
+      -- Rising edge only -- one-shot pulse, same convention as Day
+      -- Start/Day End's own triggers.
+      Controls.NanoHost_LastShowStart_Trigger.Boolean = true
+      Timer.CallAfter(function()
+        if Controls.NanoHost_LastShowStart_Trigger then Controls.NanoHost_LastShowStart_Trigger.Boolean = false end
+      end, 0.2)
+    end
+    lastShowStartWasActive = active
+  end
+
+  -- Day Start offset control wiring. Structure
+  -- (fader+text mirror, momentary bump buttons with hold-to-repeat)
+  -- deliberately mirrors the proven Zone_Offset/_Text/_Inc/_Dec pattern
+  -- above, minus everything specific to that pattern's actual purpose
+  -- (network debounce/commit to the eCNA, offset-masking during an
+  -- in-flight command, animated channel-meter preview) -- there's nothing
+  -- external to send here; changing this offset only changes a local
+  -- Q-SYS-side comparison, so evaluateDayStart() just gets called directly
+  -- and immediately on every change.
+  if ENABLE_NANOHOST then
+    if Controls.NanoHost_DayStartOffset then
+      Controls.NanoHost_DayStartOffset.EventHandler = function()
+        local v = math.floor(Controls.NanoHost_DayStartOffset.Value + 0.5)
+        if Controls.NanoHost_DayStartOffset_Text then Controls.NanoHost_DayStartOffset_Text.String = tostring(v) end
+        evaluateDayStart()
+      end
+    end
+
+    if Controls.NanoHost_DayStartOffset_Text then
+      Controls.NanoHost_DayStartOffset_Text.EventHandler = function()
+        local v = tonumber(Controls.NanoHost_DayStartOffset_Text.String)
+        if v then
+          v = math.floor(v + 0.5)
+          if     v < -180 then v = -180
+          elseif v > 60   then v = 60 end
+          Controls.NanoHost_DayStartOffset.Value = v
+          Controls.NanoHost_DayStartOffset_Text.String = tostring(v)
+          evaluateDayStart()
+        else
+          Controls.NanoHost_DayStartOffset_Text.String = tostring(math.floor((Controls.NanoHost_DayStartOffset.Value or 0) + 0.5))  -- reject non-numeric entry, restore last known value
+        end
+      end
+    end
+
+    -- Hold-to-repeat bump buttons -- same generation-counter/fresh-Timer
+    -- pattern as Zone_Offset_Inc/_Dec above (see that block's comments for
+    -- why: guards against a stale scheduled callback surviving past
+    -- release or a fresh re-press). Rate: 4 minutes/second while held past
+    -- the 2-second threshold, per Steve -- 2 minutes per 0.5s repeat tick.
+    local DS_HOLD_DELAY  = 2.0
+    local DS_HOLD_REPEAT = 0.5
+    local DS_HOLD_STEP   = 2  -- minutes per repeat tick -> 2/0.5s = 4 min/s
+    local dsStepTimer = {}
+    local dsStepGen   = {}
+
+    local function dsStepOffset(delta)
+      local ctl = Controls.NanoHost_DayStartOffset
+      if not ctl then return end
+      local cur = math.floor((ctl.Value or 0) + 0.5)
+      local v = cur + delta
+      if v < -180 then v = -180 elseif v > 60 then v = 60 end
+      if v == cur then return end
+      ctl.Value = v
+      if Controls.NanoHost_DayStartOffset_Text then Controls.NanoHost_DayStartOffset_Text.String = tostring(v) end
+      evaluateDayStart()
+    end
+
+    local function dsStartHold(dir, initialDelta, repeatDelta)
+      dsStepGen[dir] = (dsStepGen[dir] or 0) + 1
+      local myGen = dsStepGen[dir]
+      local t = Timer.New()  -- always fresh -- see Zone_Offset's identical comment above
+      dsStepTimer[dir] = t
+      dsStepOffset(initialDelta)  -- immediate single-step on press
+      t.EventHandler = function()
+        if dsStepGen[dir] ~= myGen then return end  -- released (or re-pressed) since scheduled -- stale
+        dsStepOffset(repeatDelta)
+        t:Start(DS_HOLD_REPEAT)
+      end
+      t:Start(DS_HOLD_DELAY)
+    end
+
+    local function dsStopHold(dir)
+      dsStepGen[dir] = (dsStepGen[dir] or 0) + 1  -- invalidates any pending timer callback
+      if dsStepTimer[dir] then dsStepTimer[dir]:Stop() end
+    end
+
+    if Controls.NanoHost_DayStartOffset_Inc then
+      local ctl = Controls.NanoHost_DayStartOffset_Inc
+      ctl.EventHandler = function()
+        if ctl.Boolean then dsStartHold("inc", 1, DS_HOLD_STEP) else dsStopHold("inc") end
+      end
+    end
+    if Controls.NanoHost_DayStartOffset_Dec then
+      local ctl = Controls.NanoHost_DayStartOffset_Dec
+      ctl.EventHandler = function()
+        if ctl.Boolean then dsStartHold("dec", -1, -DS_HOLD_STEP) else dsStopHold("dec") end
+      end
+    end
+  end
+
+  -- Day End offset control wiring -- identical structure to Day Start's
+  -- above (fader+text mirror, momentary bump buttons with hold-to-repeat),
+  -- same reasoning: nothing external to send, so evaluateDayEnd() just runs
+  -- directly and immediately on every change.
+  if ENABLE_NANOHOST then
+    if Controls.NanoHost_DayEndOffset then
+      Controls.NanoHost_DayEndOffset.EventHandler = function()
+        local v = math.floor(Controls.NanoHost_DayEndOffset.Value + 0.5)
+        if Controls.NanoHost_DayEndOffset_Text then Controls.NanoHost_DayEndOffset_Text.String = tostring(v) end
+        evaluateDayEnd()
+      end
+    end
+
+    if Controls.NanoHost_DayEndOffset_Text then
+      Controls.NanoHost_DayEndOffset_Text.EventHandler = function()
+        local v = tonumber(Controls.NanoHost_DayEndOffset_Text.String)
+        if v then
+          v = math.floor(v + 0.5)
+          if     v < -60  then v = -60
+          elseif v > 240  then v = 240 end
+          Controls.NanoHost_DayEndOffset.Value = v
+          Controls.NanoHost_DayEndOffset_Text.String = tostring(v)
+          evaluateDayEnd()
+        else
+          Controls.NanoHost_DayEndOffset_Text.String = tostring(math.floor((Controls.NanoHost_DayEndOffset.Value or 0) + 0.5))  -- reject non-numeric entry, restore last known value
+        end
+      end
+    end
+
+    -- Hold-to-repeat bump buttons -- same generation-counter/fresh-Timer
+    -- pattern as Day Start's dsStepOffset/dsStartHold/dsStopHold above.
+    -- Same rate: 4 minutes/second while held past the 2-second threshold.
+    local DE_HOLD_DELAY  = 2.0
+    local DE_HOLD_REPEAT = 0.5
+    local DE_HOLD_STEP   = 2  -- minutes per repeat tick -> 2/0.5s = 4 min/s
+    local deStepTimer = {}
+    local deStepGen   = {}
+
+    local function deStepOffset(delta)
+      local ctl = Controls.NanoHost_DayEndOffset
+      if not ctl then return end
+      local cur = math.floor((ctl.Value or 0) + 0.5)
+      local v = cur + delta
+      if v < -60 then v = -60 elseif v > 240 then v = 240 end
+      if v == cur then return end
+      ctl.Value = v
+      if Controls.NanoHost_DayEndOffset_Text then Controls.NanoHost_DayEndOffset_Text.String = tostring(v) end
+      evaluateDayEnd()
+    end
+
+    local function deStartHold(dir, initialDelta, repeatDelta)
+      deStepGen[dir] = (deStepGen[dir] or 0) + 1
+      local myGen = deStepGen[dir]
+      local t = Timer.New()  -- always fresh -- see Zone_Offset's identical comment above
+      deStepTimer[dir] = t
+      deStepOffset(initialDelta)  -- immediate single-step on press
+      t.EventHandler = function()
+        if deStepGen[dir] ~= myGen then return end  -- released (or re-pressed) since scheduled -- stale
+        deStepOffset(repeatDelta)
+        t:Start(DE_HOLD_REPEAT)
+      end
+      t:Start(DE_HOLD_DELAY)
+    end
+
+    local function deStopHold(dir)
+      deStepGen[dir] = (deStepGen[dir] or 0) + 1  -- invalidates any pending timer callback
+      if deStepTimer[dir] then deStepTimer[dir]:Stop() end
+    end
+
+    if Controls.NanoHost_DayEndOffset_Inc then
+      local ctl = Controls.NanoHost_DayEndOffset_Inc
+      ctl.EventHandler = function()
+        if ctl.Boolean then deStartHold("inc", 1, DE_HOLD_STEP) else deStopHold("inc") end
+      end
+    end
+    if Controls.NanoHost_DayEndOffset_Dec then
+      local ctl = Controls.NanoHost_DayEndOffset_Dec
+      ctl.EventHandler = function()
+        if ctl.Boolean then deStartHold("dec", -1, -DE_HOLD_STEP) else deStopHold("dec") end
+      end
+    end
+  end
+
+  -- First Show End offset control wiring -- identical structure to Day
+  -- Start/Day End's above. Re-running evaluateFirstShowEnd() on every
+  -- change is harmless even after the one-shot latch has fired: it will
+  -- simply find fseTriggered already true and do nothing.
+  if ENABLE_NANOHOST then
+    if Controls.NanoHost_FirstShowEndOffset then
+      Controls.NanoHost_FirstShowEndOffset.EventHandler = function()
+        local v = math.floor(Controls.NanoHost_FirstShowEndOffset.Value + 0.5)
+        if Controls.NanoHost_FirstShowEndOffset_Text then Controls.NanoHost_FirstShowEndOffset_Text.String = tostring(v) end
+        evaluateFirstShowEnd()
+      end
+    end
+
+    if Controls.NanoHost_FirstShowEndOffset_Text then
+      Controls.NanoHost_FirstShowEndOffset_Text.EventHandler = function()
+        local v = tonumber(Controls.NanoHost_FirstShowEndOffset_Text.String)
+        if v then
+          v = math.floor(v + 0.5)
+          if     v < -60 then v = -60
+          elseif v > 60  then v = 60 end
+          Controls.NanoHost_FirstShowEndOffset.Value = v
+          Controls.NanoHost_FirstShowEndOffset_Text.String = tostring(v)
+          evaluateFirstShowEnd()
+        else
+          Controls.NanoHost_FirstShowEndOffset_Text.String = tostring(math.floor((Controls.NanoHost_FirstShowEndOffset.Value or 0) + 0.5))  -- reject non-numeric entry, restore last known value
+        end
+      end
+    end
+
+    -- Hold-to-repeat bump buttons -- same generation-counter/fresh-Timer
+    -- pattern as Day Start/Day End above. Same rate: 4 minutes/second while
+    -- held past the 2-second threshold.
+    local FSE_HOLD_DELAY  = 2.0
+    local FSE_HOLD_REPEAT = 0.5
+    local FSE_HOLD_STEP   = 2  -- minutes per repeat tick -> 2/0.5s = 4 min/s
+    local fseStepTimer = {}
+    local fseStepGen   = {}
+
+    local function fseStepOffset(delta)
+      local ctl = Controls.NanoHost_FirstShowEndOffset
+      if not ctl then return end
+      local cur = math.floor((ctl.Value or 0) + 0.5)
+      local v = cur + delta
+      if v < -60 then v = -60 elseif v > 60 then v = 60 end
+      if v == cur then return end
+      ctl.Value = v
+      if Controls.NanoHost_FirstShowEndOffset_Text then Controls.NanoHost_FirstShowEndOffset_Text.String = tostring(v) end
+      evaluateFirstShowEnd()
+    end
+
+    local function fseStartHold(dir, initialDelta, repeatDelta)
+      fseStepGen[dir] = (fseStepGen[dir] or 0) + 1
+      local myGen = fseStepGen[dir]
+      local t = Timer.New()  -- always fresh -- see Zone_Offset's identical comment above
+      fseStepTimer[dir] = t
+      fseStepOffset(initialDelta)  -- immediate single-step on press
+      t.EventHandler = function()
+        if fseStepGen[dir] ~= myGen then return end  -- released (or re-pressed) since scheduled -- stale
+        fseStepOffset(repeatDelta)
+        t:Start(FSE_HOLD_REPEAT)
+      end
+      t:Start(FSE_HOLD_DELAY)
+    end
+
+    local function fseStopHold(dir)
+      fseStepGen[dir] = (fseStepGen[dir] or 0) + 1  -- invalidates any pending timer callback
+      if fseStepTimer[dir] then fseStepTimer[dir]:Stop() end
+    end
+
+    if Controls.NanoHost_FirstShowEndOffset_Inc then
+      local ctl = Controls.NanoHost_FirstShowEndOffset_Inc
+      ctl.EventHandler = function()
+        if ctl.Boolean then fseStartHold("inc", 1, FSE_HOLD_STEP) else fseStopHold("inc") end
+      end
+    end
+    if Controls.NanoHost_FirstShowEndOffset_Dec then
+      local ctl = Controls.NanoHost_FirstShowEndOffset_Dec
+      ctl.EventHandler = function()
+        if ctl.Boolean then fseStartHold("dec", -1, -FSE_HOLD_STEP) else fseStopHold("dec") end
+      end
+    end
+  end
+
+  -- Last Show Start offset control wiring -- identical structure to Day
+  -- Start/Day End/First Show End above.
+  if ENABLE_NANOHOST then
+    if Controls.NanoHost_LastShowStartOffset then
+      Controls.NanoHost_LastShowStartOffset.EventHandler = function()
+        local v = math.floor(Controls.NanoHost_LastShowStartOffset.Value + 0.5)
+        if Controls.NanoHost_LastShowStartOffset_Text then Controls.NanoHost_LastShowStartOffset_Text.String = tostring(v) end
+        evaluateLastShowStart()
+      end
+    end
+
+    if Controls.NanoHost_LastShowStartOffset_Text then
+      Controls.NanoHost_LastShowStartOffset_Text.EventHandler = function()
+        local v = tonumber(Controls.NanoHost_LastShowStartOffset_Text.String)
+        if v then
+          v = math.floor(v + 0.5)
+          if     v < -90 then v = -90
+          elseif v > 60  then v = 60 end
+          Controls.NanoHost_LastShowStartOffset.Value = v
+          Controls.NanoHost_LastShowStartOffset_Text.String = tostring(v)
+          evaluateLastShowStart()
+        else
+          Controls.NanoHost_LastShowStartOffset_Text.String = tostring(math.floor((Controls.NanoHost_LastShowStartOffset.Value or 0) + 0.5))  -- reject non-numeric entry, restore last known value
+        end
+      end
+    end
+
+    -- Hold-to-repeat bump buttons -- same generation-counter/fresh-Timer
+    -- pattern as Day Start/Day End/First Show End above. Same rate: 4
+    -- minutes/second while held past the 2-second threshold.
+    local LSS_HOLD_DELAY  = 2.0
+    local LSS_HOLD_REPEAT = 0.5
+    local LSS_HOLD_STEP   = 2  -- minutes per repeat tick -> 2/0.5s = 4 min/s
+    local lssStepTimer = {}
+    local lssStepGen   = {}
+
+    local function lssStepOffset(delta)
+      local ctl = Controls.NanoHost_LastShowStartOffset
+      if not ctl then return end
+      local cur = math.floor((ctl.Value or 0) + 0.5)
+      local v = cur + delta
+      if v < -90 then v = -90 elseif v > 60 then v = 60 end
+      if v == cur then return end
+      ctl.Value = v
+      if Controls.NanoHost_LastShowStartOffset_Text then Controls.NanoHost_LastShowStartOffset_Text.String = tostring(v) end
+      evaluateLastShowStart()
+    end
+
+    local function lssStartHold(dir, initialDelta, repeatDelta)
+      lssStepGen[dir] = (lssStepGen[dir] or 0) + 1
+      local myGen = lssStepGen[dir]
+      local t = Timer.New()  -- always fresh -- see Zone_Offset's identical comment above
+      lssStepTimer[dir] = t
+      lssStepOffset(initialDelta)  -- immediate single-step on press
+      t.EventHandler = function()
+        if lssStepGen[dir] ~= myGen then return end  -- released (or re-pressed) since scheduled -- stale
+        lssStepOffset(repeatDelta)
+        t:Start(LSS_HOLD_REPEAT)
+      end
+      t:Start(LSS_HOLD_DELAY)
+    end
+
+    local function lssStopHold(dir)
+      lssStepGen[dir] = (lssStepGen[dir] or 0) + 1  -- invalidates any pending timer callback
+      if lssStepTimer[dir] then lssStepTimer[dir]:Stop() end
+    end
+
+    if Controls.NanoHost_LastShowStartOffset_Inc then
+      local ctl = Controls.NanoHost_LastShowStartOffset_Inc
+      ctl.EventHandler = function()
+        if ctl.Boolean then lssStartHold("inc", 1, LSS_HOLD_STEP) else lssStopHold("inc") end
+      end
+    end
+    if Controls.NanoHost_LastShowStartOffset_Dec then
+      local ctl = Controls.NanoHost_LastShowStartOffset_Dec
+      ctl.EventHandler = function()
+        if ctl.Boolean then lssStartHold("dec", -1, -LSS_HOLD_STEP) else lssStopHold("dec") end
+      end
+    end
+  end
+
   local function checkFullyPopulated()
     if statusIsOK then return end
     if not (populated.rid and populated.rst and populated.inNames
@@ -1826,19 +2629,30 @@ if Controls then
     if ENABLE_QDC and not (populated.dimmerSetup and populated.linScan and populated.lightPoll) then
       return
     end
+    if ENABLE_NANOHOST and not populated.nanoHost then
+      return
+    end
     statusIsOK = true
     setStatus(STATUS_OK, "OK")
   end
-  -- v1.3 design decision: nanoHost data is deliberately NOT part of the
-  -- Status=OK gate above, unlike QDC's dimmerSetup/linScan/lightPoll. It's
-  -- purely informational (no action depends on it), and it's intentionally
-  -- the slowest poll in the plugin (NANO_POLL_RATE=150s) -- gating overall
-  -- Status on it would mean every fresh connect with Enable_NanoHost=Yes
-  -- takes up to 2.5 minutes to reach "OK" even though everything else the
-  -- plugin actually does is ready immediately. NanoHost_* controls simply
-  -- hold their last-known (or blank) values until their own slow poll
-  -- eventually lands. Flag for Steve to confirm/override if he'd rather it
-  -- gate Status when enabled, for consistency with the QDC precedent.
+  -- v1.3.0.60: per Steve, nanoHost now DOES gate Status=OK when enabled,
+  -- for consistency with the QDC precedent (dimmerSetup/linScan/lightPoll)
+  -- above -- Steve would rather wait a bit longer at "Initializing" than
+  -- have "OK" appear before everything on screen actually reflects a real
+  -- response. `populated.nanoHost` is set true on the FIRST response from
+  -- the eCNA's nanoHost endpoint of any kind -- <UpToDate/>, HostUp=false,
+  -- or a full dataset -- exactly parallel to how the QDC flags only
+  -- require a response having landed, not that hardware is necessarily
+  -- present. In practice this does NOT add the full NANO_POLL_RATE (120s)
+  -- to connect time: /rtmandata.xml is already fetched in the same
+  -- immediate on-connect bootstrap burst as the input/output names and QDC
+  -- setup fetches (see the "get the nanoHost's initial conditions in the
+  -- same bootstrap burst" comment above, near nameQueue), not on the slow
+  -- routine poll cadence -- so this only adds the few seconds that fetch
+  -- itself takes, same as every other startup fetch. `checkFullyPopulated()`
+  -- is called after each of the three `populated.nanoHost = true` sites in
+  -- `parseNanoHost` below so Status actually flips the moment that first
+  -- response lands.
 
   -- v1.2.0.32: split in two. CAI (RID/RST) and HTTP (names, dimmer setup,
   -- LIN scan, scrape, light poll) are independent channels/sockets --
@@ -2816,6 +3630,11 @@ if Controls then
   local httpBuf       = ""
   local httpConnected = false
   local scrapeTimer   = Timer.New()
+  -- v1.3.0.64: generation counter for the HTTP connect failsafe below --
+  -- bumped on every httpSock:Connect() attempt so a stale 10s timeout from a
+  -- superseded attempt can't wrongly act on a newer one. Mirrors connectingGen
+  -- on the CAI socket.
+  local httpConnectingGen = 0
 
   -- Send HTTP GET, tagging currentReqType so the Closed handler knows
   -- which parser to route the response to.
@@ -2891,6 +3710,27 @@ if Controls then
     end
     scrapeTimer:Stop()  -- pause timer; restarted in Closed handler
     if not httpConnected then
+      -- v1.3.0.64 BUG FIX: the CAI socket has always had a 10s failsafe for
+      -- exactly this situation (see connect()/doConnect() above) -- if the
+      -- target never responds at the network level at all (eCNA not yet
+      -- powered on), the underlying TCP connect can hang far longer than a
+      -- target that's up and actively refusing, and no terminal Closed/Error
+      -- event arrives to let us retry. The HTTP socket never had the same
+      -- protection: scrapeTimer is stopped the instant a connect attempt
+      -- starts (above) and only restarts in the Closed handler, so a single
+      -- hung attempt against a not-yet-booted eCNA could block Inputs/
+      -- Outputs/QDC/nanoHost data (and therefore Status=OK) for well over a
+      -- minute after the eCNA actually came up, since nothing was retrying.
+      -- Force it to give up and retry after 10s, same as the CAI side.
+      httpConnectingGen = httpConnectingGen + 1
+      local myHttpGen = httpConnectingGen
+      Timer.CallAfter(function()
+        if not httpConnected and httpConnectingGen == myHttpGen then
+          dbg("HTTP connect attempt did not resolve within 10s, treating as failed")
+          httpBusy = false
+          scrapeTimer:Start(SCRAPE_RATE)
+        end
+      end, 10)
       httpSock:Connect(ip, 80)
       return
     end
@@ -3347,9 +4187,9 @@ if Controls then
   -- BtwTim, BSTim, ASTim, BETim, AETim. Tod is the plain time-of-day clock
   -- string, not a duration.
   --
-  -- Only the upper Stat section is parsed in this build -- the lower
-  -- variable-row Screen (shows schedule) section is not yet implemented,
-  -- see header comment.
+  -- Used for both the upper Stat section below and the lower, variable-row
+  -- Screen (shows schedule) section -- see extractShows() further down,
+  -- which calls back into this same helper for each show's sub-fields.
   local function xmlTag(data, tag)
     local s = string.find(data, "<"..tag..">", 1, true)
     if not s then return nil end
@@ -3520,17 +4360,13 @@ if Controls then
     end
   end
 
-  -- v1.3.0.15 EXPERIMENT: attempts to color the StartTime/RunTime TEXT
-  -- controls themselves, closer to the real page's actual cell-background
-  -- highlight -- per Steve, "let's try to see if we can color the
-  -- background on the fly." This is genuinely unverified: it's not known
-  -- whether a Text-style control's Color property is even settable at
-  -- runtime, or whether it affects foreground text vs. background fill, on
-  -- real Q-SYS hardware. Entirely pcall-wrapped so a failure here can never
-  -- affect anything else -- the setHighlightLed() indicator LEDs above are
-  -- the guaranteed-working mechanism regardless of whether this does
-  -- anything visible. Worth reporting back whether this visibly changes
-  -- anything on a real Core.
+  -- v1.3.0.15: colors the StartTime/RunTime TEXT controls themselves,
+  -- closer to the real page's actual cell-background highlight -- per
+  -- Steve, "let's try to see if we can color the background on the fly."
+  -- Confirmed working on real hardware, flawless in every field test since.
+  -- Still pcall-wrapped (cheap insurance, no reason to remove it) -- the
+  -- setHighlightLed() indicator LEDs above remain the mechanism this
+  -- degrades to if it ever failed.
   local function tryExperimentalTextHighlight(ctl, active, preferredColor)
     if not ctl then return end
     pcall(function() ctl.Color = active and preferredColor or "black" end)
@@ -3634,6 +4470,7 @@ if Controls then
     if string.find(data, "<UpToDate", 1, true) then
       dbg("NanoHost: <UpToDate/> reply, no change since last request")
       populated.nanoHost = true
+      checkFullyPopulated()
       return
     end
 
@@ -3689,6 +4526,7 @@ if Controls then
       blankShowSchedule()
       dbg("NanoHost: HostUp=false, timers and show schedule blanked")
       populated.nanoHost = true
+      checkFullyPopulated()
       return
     end
 
@@ -3778,6 +4616,7 @@ if Controls then
       .. " HostUp=" .. tostring(flag("HostUp")) .. " Cancel=" .. tostring(flag("Cancel"))
       .. " | Show Schedule: " .. #shows .. " performance(s)")
     populated.nanoHost = true
+    checkFullyPopulated()
   end
 
   -- Queue a Zone preset/offset command; capped at 4 in-flight, matching the
@@ -4388,6 +5227,10 @@ if Controls then
       if Controls.NanoHost_TimeOfDay then
         Controls.NanoHost_TimeOfDay.String = os.date("%m/%d/%Y %H:%M:%S")
       end
+      evaluateDayStart()       -- Day Start re-evaluated every second (offset-threshold crossing is time-of-day based)
+      evaluateDayEnd()         -- Day End likewise re-evaluated every second
+      evaluateFirstShowEnd()   -- First Show End likewise re-evaluated every second
+      evaluateLastShowStart()  -- Last Show Start likewise re-evaluated every second
       nanoTickTimer:Start(NANO_TICK)
     end
     nanoTickTimer:Start(NANO_TICK)
@@ -4496,6 +5339,42 @@ if Controls then
     blankShowSchedule()
     if Controls.NanoHost_TimeOfDay then
       Controls.NanoHost_TimeOfDay.String = os.date("%m/%d/%Y %H:%M:%S")
+    end
+    -- Day Start starts blanked/false until evaluateDayStart() has real data
+    if Controls.NanoHost_DayStart then
+      Controls.NanoHost_DayStart.Boolean = false
+      Controls.NanoHost_DayStart.Color = "dimgray"
+    end
+    if Controls.NanoHost_DayStart_Trigger then Controls.NanoHost_DayStart_Trigger.Boolean = false end
+    if Controls.NanoHost_DayStartOffset and Controls.NanoHost_DayStartOffset_Text then
+      Controls.NanoHost_DayStartOffset_Text.String = tostring(math.floor((Controls.NanoHost_DayStartOffset.Value or 0) + 0.5))
+    end
+    -- Day End starts blanked/false until evaluateDayEnd() has real data
+    if Controls.NanoHost_DayEnd then
+      Controls.NanoHost_DayEnd.Boolean = false
+      Controls.NanoHost_DayEnd.Color = "dimgray"
+    end
+    if Controls.NanoHost_DayEnd_Trigger then Controls.NanoHost_DayEnd_Trigger.Boolean = false end
+    if Controls.NanoHost_DayEndOffset and Controls.NanoHost_DayEndOffset_Text then
+      Controls.NanoHost_DayEndOffset_Text.String = tostring(math.floor((Controls.NanoHost_DayEndOffset.Value or 0) + 0.5))
+    end
+    -- First Show End starts blanked/false until evaluateFirstShowEnd() has real data
+    if Controls.NanoHost_FirstShowEnd then
+      Controls.NanoHost_FirstShowEnd.Boolean = false
+      Controls.NanoHost_FirstShowEnd.Color = "dimgray"
+    end
+    if Controls.NanoHost_FirstShowEnd_Trigger then Controls.NanoHost_FirstShowEnd_Trigger.Boolean = false end
+    if Controls.NanoHost_FirstShowEndOffset and Controls.NanoHost_FirstShowEndOffset_Text then
+      Controls.NanoHost_FirstShowEndOffset_Text.String = tostring(math.floor((Controls.NanoHost_FirstShowEndOffset.Value or 0) + 0.5))
+    end
+    -- Last Show Start starts blanked/false until evaluateLastShowStart() has real data
+    if Controls.NanoHost_LastShowStart then
+      Controls.NanoHost_LastShowStart.Boolean = false
+      Controls.NanoHost_LastShowStart.Color = "dimgray"
+    end
+    if Controls.NanoHost_LastShowStart_Trigger then Controls.NanoHost_LastShowStart_Trigger.Boolean = false end
+    if Controls.NanoHost_LastShowStartOffset and Controls.NanoHost_LastShowStartOffset_Text then
+      Controls.NanoHost_LastShowStartOffset_Text.String = tostring(math.floor((Controls.NanoHost_LastShowStartOffset.Value or 0) + 0.5))
     end
   end
   pollTimer:Start(POLL_RATE)
