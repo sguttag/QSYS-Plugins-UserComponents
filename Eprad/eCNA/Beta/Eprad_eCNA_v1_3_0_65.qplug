@@ -1,23 +1,23 @@
 -- Eprad eCNA Cinema Automation Interface (CAI) Plugin
 -- Protocol: CAI ASCII over TCP, plus HTTP scrape/control for I/O flags,
--- user-defined names, optional Eprad QDC-400 dimmer lighting, and optional
+-- user-defined names, (v1.2+) Eprad QDC-400 dimmer lighting, and (v1.3+)
 -- Eprad nanoHost POS management data.
 -- Reference: eCNA Operation and Installation Manual, Section 6
 --
--- QDC-400 dimmer lighting (Status: Light Control web page, manual Section
--- 5.9): the CAI serial protocol (port 13002) has no commands for Zone 3-16
--- lights, individual channel levels, or light level offset -- only
--- House/Stage lights are reachable via CAI OUT codes. QDC monitoring/
--- control is therefore implemented entirely through the HTTP scrape/queue
+-- v1.2: QDC-400 dimmer lighting (Status: Light Control web page, manual
+-- Section 5.9). The CAI protocol has no commands for Zone 3-16 lights,
+-- individual channel levels, or light level offset -- only House/Stage
+-- lights are reachable via CAI OUT codes. QDC monitoring/control is
+-- therefore implemented entirely through the HTTP scrape/queue
 -- architecture (rtLights.xml), not the CAI socket.
 --
--- nanoHost POS Management Data (manual Section 5.10, "Status: Management
--- Data"): a separate physical Eprad device -- the eCNA merely relays what
--- the nanoHost last reported. Updates infrequently, so this feature is
--- polled far slower than scrape/lightpoll (see NANO_POLL_RATE below).
--- Read-only and purely informational, except for the four flag-type
--- outputs (Day Start/Day End/First Show End/Last Show Start) documented
--- near their own implementations further down.
+-- v1.3: nanoHost POS Management Data (manual Section 5.10, "Status:
+-- Management Data"): a separate physical Eprad device -- the eCNA merely
+-- relays what the nanoHost last reported. Updates infrequently, so this
+-- feature is polled far slower than scrape/lightpoll (see NANO_POLL_RATE
+-- below). Read-only and purely informational, except for the four
+-- flag-type outputs (Day Start/Day End/First Show End/Last Show Start)
+-- documented near their own implementations further down.
 --
 -- The eCNA-10 manual documents only the rendered Management Data screen,
 -- not the underlying XML. The endpoint name (/rtmandata.xml) and field tags
