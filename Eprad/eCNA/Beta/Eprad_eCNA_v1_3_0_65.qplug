@@ -1,374 +1,40 @@
 -- Eprad eCNA Cinema Automation Interface (CAI) Plugin
 -- Protocol: CAI ASCII over TCP, plus HTTP scrape/control for I/O flags,
--- user-defined names, (v1.2+) Eprad QDC-400 dimmer lighting, and (v1.3+)
+-- user-defined names, optional Eprad QDC-400 dimmer lighting, and optional
 -- Eprad nanoHost POS management data.
 -- Reference: eCNA Operation and Installation Manual, Section 6
 --
--- v1.2: Adds monitoring and control of the Eprad QDC-400 dimmer lighting
--- system (Status: Light Control web page, manual Section 5.9). The CAI
--- serial protocol (port 13002) has NO commands for Zone 3-16 lights,
--- individual channel levels, or light level offset -- only House/Stage
--- lights are reachable via CAI OUT codes. QDC monitoring/control is only
--- possible via the eCNA's HTTP web interface (rtLights.xml), so this
--- feature is implemented entirely through the existing single-connection
--- HTTP scrape/queue architecture from v1.1, not the CAI socket.
+-- QDC-400 dimmer lighting (Status: Light Control web page, manual Section
+-- 5.9): the CAI serial protocol (port 13002) has no commands for Zone 3-16
+-- lights, individual channel levels, or light level offset -- only
+-- House/Stage lights are reachable via CAI OUT codes. QDC monitoring/
+-- control is therefore implemented entirely through the HTTP scrape/queue
+-- architecture (rtLights.xml), not the CAI socket.
 --
--- v1.3 (in progress): Adds read-only support for the Eprad nanoHost POS
--- Management Data screen (manual Section 5.10, "Status: Management Data").
--- This is a SEPARATE physical Eprad device; the eCNA merely relays what the
--- nanoHost last reported (updates no faster than every 5 minutes per Steve,
--- so this feature is deliberately polled far slower than scrape/lightpoll --
--- see NANO_POLL_RATE below). Nothing on this page causes any action; it is
--- purely informational.
+-- nanoHost POS Management Data (manual Section 5.10, "Status: Management
+-- Data"): a separate physical Eprad device -- the eCNA merely relays what
+-- the nanoHost last reported. Updates infrequently, so this feature is
+-- polled far slower than scrape/lightpoll (see NANO_POLL_RATE below).
+-- Read-only and purely informational, except for the four flag-type
+-- outputs (Day Start/Day End/First Show End/Last Show Start) documented
+-- near their own implementations further down.
 --
--- v1.3.0.51: comment-only. Corrects the internal documentation below, which
--- had claimed the disappearing-controls failures were caused by a Q-SYS
--- local-variable ceiling and that runtime code placement was load-bearing.
--- Both claims were wrong. A 31-file correlation study (every build tested on
--- hardware during the Day Start work) showed a perfect, zero-exception match:
--- every build that FAILED had at least one apostrophe in a GetControls
--- Description string; every build that WORKED had none. No Lua logic changed
--- in this build.
---
--- v1.3.0.50: Day Start layout reformatted to match the Dimmer Control page's
--- Zone_Offset fader/text/step-button arrangement (offset text and -/+ step
--- buttons to the right of the fader, an "Offset (minutes)" header above the
--- fader, and the Day Start/Trigger LEDs stacked to the fader's left, Day
--- Start above Trigger), per Steve, for visual consistency between pages.
---
--- v1.3.0.49: Fixes the long-running "all controls disappear when NanoHost is
--- enabled" failure. Root cause: an apostrophe in a GetControls Description
--- ("the first show's StartTime"). Q-SYS silently drops EVERY control on
--- EVERY page at design time when one is present -- no error, before
--- emulation. Removing the apostrophe fixed it. NEVER use an apostrophe in
--- any GetControls/GetControlLayout string value.
---
--- v1.3.0.43: Adds the first of four planned flag-type outputs -- Day Start
--- (LED + paired trigger output, with an adjustable -180..+60 minute offset:
--- fader + editable text + hold-to-repeat bump buttons). Day Start is true
--- once the first show of the day (FS) is also the active performance
--- (Show Start) AND time of day has reached that show StartTime plus the
--- offset; it stays true until FS goes low, and the trigger pulses once on
--- the rising edge. Field-confirmed on real hardware against a live schedule.
---
--- v1.3.0.32: two timing changes, per Steve. (1) NANO_POLL_RATE reduced from
--- 150s (2.5 min) to 120s (2 min). (2) forceEarlyNanoHostRefresh's delay
--- reduced from 4s to 3s.
---
--- v1.3.0.31: word-wrap confirmed working (Steve). Both paragraph-break
--- gaps (Cyan->Yellow, Yellow->help sentence) halved from 16px to 8px --
--- Steve reported they were reading as roughly double the Key-header-to-
--- Cyan-paragraph gap, which he confirmed was the correct amount. Some
--- visible separation kept (not removed entirely), since that spacing was
--- explicitly requested in 1.3.0.29.
---
--- v1.3.0.30: Key section reformatted, per Steve. The Cyan LED explanation
--- is now ONE paragraph (both sentences combined into a single, taller
--- Label sized for 2 lines) allowed to word-wrap, rather than split into
--- two explicit lines -- Steve explicitly asked for wrapping here (unlike
--- the top instructions paragraph, where wrapping was avoided out of
--- caution) since he expects it's likely needed given the combined length.
--- NOT fully confirmed this Label type wraps rather than clips -- worth
--- checking once visible in Designer. Added a blank-line paragraph break
--- before the Yellow LED paragraph and again before the help-file sentence.
---
--- v1.3.0.29: three changes, per Steve. (1) Key section's old single "Show
--- Start/End..." sentence replaced with four separate lines explaining the
--- Cyan/Yellow highlight LEDs and their relationship to the Status Flags,
--- plus a pointer to the help file -- kept as explicit separate Labels
--- (not one long line relying on text-wrap), same reasoning as the top
--- instructions paragraph split in 1.3.0.16. Page height grows naturally to
--- fit (no explicit page-size constant exists in this file to adjust).
--- (2) Both refresh-trigger delays (Time Before Feature Start/End reaching
--- 0:01) reduced from 5 seconds to 4.
---
--- v1.3.0.28 BUG FIX (real field report: "POS Ticket Sold... is staying
--- true"): xmlTag() finds the FIRST occurrence of "<tag>" anywhere in
--- whatever string it's given. Every top-level Stat flag/timer/marker read
--- used the FULL response body -- but <Screen> (which comes BEFORE <Stat>
--- in the document) contains its own per-show <Sold> and <Cancel> tags
--- inside each <StartTime> block, same tag names as the top-level Stat
--- flags. So the top-level "Sold" lookup was silently picking up the FIRST
--- show's own per-show Sold value instead of the real Stat/Sold flag -- and
--- since a day's first performance is very often already sold by the time
--- you're checking status later on, POS Ticket Sold ended up pinned true
--- regardless of the actual live flag. NanoHost_Cancel has the identical
--- latent bug (Stat and per-show both have a <Cancel> tag) -- purely masked
--- in every test/capture used so far because both happened to be 0
--- together every time. No other Stat field collides with a per-show tag
--- name (RunTim vs RunTime, Start vs StartTime, etc. differ enough that the
--- substring search doesn't cross-match) -- confirmed by checking every
--- Stat tag against the full per-show field set, not just assumed. Fixed
--- by scoping every top-level lookup to the <Stat>...</Stat> substring
--- specifically. Verified two ways: an isolated test proving the OLD code
--- really would have returned the wrong value for this exact bug (not just
--- that the new code returns the right one), and a true end-to-end test
--- through the real parseNanoHost function confirming both the top-level
--- flags and the independently-correct per-show values.
---
--- v1.3.0.27: two changes, per Steve. (1) Time Before Feature End now also
--- triggers an early nanoHost refresh when it reaches 0:01, same one-shot-
--- per-countdown mechanism as Time Before Feature Start's trigger from
--- 1.3.0.26. Both now share a unified 5-second delay (was 2s for Start-only
--- in 1.3.0.26) via a new shared forceEarlyNanoHostRefresh() helper.
--- (2) Sentinel-freeze: per Steve, 255:59 (NANO_TIME_MAX) on a "before"
--- counter means the eCNA has no real countdown data yet, not a genuine
--- 255-minute-59-second duration -- BSTim/BETim now freeze instead of
--- ticking down whenever already AT the sentinel, only resuming a real
--- countdown once an actual poll provides a value below it. This also
--- correctly keeps ASTim/AETim from starting either, since their gating
--- already depends on BSTim/BETim reaching exactly 0, which can't happen
--- from a frozen sentinel. The up-counters themselves are unchanged --
--- still count up and cap AT the sentinel as their normal ceiling (already
--- true of all four timers via clampNanoSec since 1.3.0.3, confirmed still
--- correct here, not a new change). Verified with dedicated tests: BETim's
--- trigger fires exactly once with the new 5s delay; BSTim/BETim seeded at
--- the sentinel stay frozen across 20 ticks with ASTim/AETim correctly
--- never starting; a subsequent real poll with an actual value correctly
--- overrides the freeze and resumes normal countdown.
---
--- v1.3.0.26: two changes, per Steve. (1) When Time Before Start reaches
--- 0:01 (one tick before its real 0:00 crossover), force an early nanoHost
--- flag refresh 2 seconds later, giving the eCNA time to update its own
--- flags around show start rather than waiting up to NANO_POLL_RATE (150s)
--- for the next routine poll. Triggered on "==1" rather than "==0"
--- specifically because BSTim floors at 0 and stays there (checking "==0"
--- would refire every tick indefinitely); a strictly-decreasing count can
--- only equal 1 once per countdown, so no separate one-shot guard is
--- needed. Implemented by forcing nanoTicks to nanoPollEveryNTicks, reusing
--- httpRequest()'s existing NANOHOST poll tier rather than adding a new
--- one. Verified with a dedicated test: fires exactly once per countdown,
--- the forced fetch is genuinely delayed 2 seconds (not immediate), and it
--- results in a real second /rtmandata.xml fetch. (2) Six Show Timer labels
--- renamed to include "Feature" (Feature Run Time / Time Between Features /
--- Time Before Feature Start / Time After Feature Start / Time Before
--- Feature End / Time After Feature End) -- control names and pins
--- unchanged, only the on-screen labels/PrettyNames and GetControls
--- Description strings changed.
---
--- v1.3.0.25: "darkgray" swapped for "dimgray" for the marker off-color --
--- despite the names, "dimgray" (rgb 105,105,105) is actually darker/more
--- muted than "darkgray" (rgb 169,169,169), a CSS naming quirk analogous to
--- lime being brighter than green (v1.3.0.23). Applied to both the runtime
--- (setMarkerLed) and the layout-time pre-poll defaults.
---
--- v1.3.0.24: per Steve, all four markers' inactive/off color switched to a
--- uniform "darkgray" -- active colors (pink/lime/chocolate/orange)
--- unchanged, already confirmed correct against real hardware. Supersedes
--- 1.3.0.23's FE-specific green fix with a simpler, uniform "off is off"
--- convention across the whole marker cluster. Applied to both the runtime
--- (setMarkerLed) and the layout-time pre-poll defaults. "darkgray" is a new
--- string not yet confirmed on real hardware -- same pcall-protected
--- safe-fallback-to-green pattern as every other named color in this file
--- covers it if it somehow isn't valid.
---
--- v1.3.0.23: FE's inactive color split off from its active color, per
--- Steve's field feedback. He confirmed the ACTIVE lime is correct (matches
--- the real page), but the INACTIVE/dimmed lime still looked "almost on" --
--- vibrant rather than dull -- compared to Cancel's correctly-dull green in
--- the same screenshot. CSS-style "lime" (rgb(0,255,0), maximal saturation)
--- apparently doesn't dim as visibly as "green" (rgb(0,128,0), already a
--- darker shade) -- Cancel already proves "green" dims correctly. FS/LS/LE
--- (pink/chocolate/orange) weren't flagged as a problem and are unchanged --
--- narrow, targeted fix for FE specifically: lime when active, green when
--- inactive (both layout-time default and runtime). Verified with a
--- dedicated test confirming FE flips lime/green correctly across the
--- active/inactive transition while FS (and by the same logic LS/LE) keeps
--- the same color in both states, unaffected.
---
--- v1.3.0.22: two changes on top of the 1.3.0.21 baseline. (1) Screen_Id
--- replaces the old NanoHost_Screen -- confirmed directly in the eCNA-10
--- manual's own RID documentation that the RSP,RID response's record
--- contains Device Name, Software Version, AND Screen Id as its three codes
--- (worked example: "RSP,RID,0,0,eCNA-10,1007,27,1630" -> field 7="27" is
--- Screen Id), the exact same response Model/Firmware Version already come
--- from. Screen_Id is now unconditional -- no longer gated behind
--- Enable_NanoHost at all, since screen identity is a general eCNA
--- property, not a nanoHost-specific one -- moved to the Setup page right
--- alongside Model/Firmware. Verified with a true end-to-end test driving
--- the manual's own example through the real CAI socket -> processLine ->
--- parseRID path (not just isolated logic), confirming Model/Firmware/
--- Screen_Id all populate correctly even with Enable_NanoHost=false. (2)
--- The off-color fix (markers keep their own hue when inactive, instead of
--- resetting to green) reintroduced as the ONE isolated feature Steve asked
--- to test on top of the 1.3.0.21 reset -- deliberately nothing else from
--- the 1.3.0.18-20 lineage carried forward alongside it, so if this
--- specific change turns out to cause a problem, it'll be unambiguous which
--- one did it.
---
--- v1.3.0.21: DELIBERATE RESET, per Steve. Builds 1.3.0.18 through 1.3.0.20
--- introduced a real, still-unresolved bug -- enabling Enable_NanoHost makes
--- Q-SYS Designer's Script Programmer Mode show ONLY a generic "Disable"
--- pin instead of the plugin's real Input/Output pins, and the same thing
--- happens to every other page's non-text controls too. This happens before
--- any compile or emulation -- purely from GetControls being invoked by
--- Designer's UI -- confirming it's a design-time GetControls failure, not
--- a runtime issue. Two reasoned, evidence-based fix attempts (1.3.0.19's
--- ButtonType/ButtonStyle correction, 1.3.0.20's restored numeric-property
--- coercion) did NOT resolve it, and a full diff against this confirmed-
--- working 1.3.0.17 baseline didn't turn up anything else obviously wrong.
--- Rather than keep guessing on top of an already-murky base, this build
--- starts CLEAN from 1.3.0.17 (the last version Steve explicitly confirmed
--- working, with screenshots) plus only two additional, narrow, low-risk
--- changes: (1) IsBold=true on the "Show Timers"/"Status Flags" headers,
--- replacing the confirmed-ineffective FontStyle="Bold" (FontSize kept at
--- 13, unchanged from 1.3.0.17 -- the FontSize=17 bump from 1.3.0.18 was
--- NOT carried forward, since it wasn't part of what was asked for here);
--- (2) Cancel LED shifted 4px left. Everything else from 1.3.0.18-20 --
--- the off-color fix, NanoHost_HideEmptyRows toggle, the numeric-coercion
--- restoration, the ButtonType lesson -- is INTENTIONALLY not present in
--- this build. This is the new baseline for any further changes; the
--- disappearing-pins bug itself is still open and unresolved, to be
--- revisited once this baseline is confirmed solid.
---
--- v1.3.0.17: (1) FS/FE/LS/LE restored to the real palette (pink/lime/
--- chocolate/orange) now that named strings are confirmed to work broadly,
--- not just "green"/"red" -- same safe-baseline-then-pcall-upgrade pattern
--- as the Now Playing highlight. (2) Instructions paragraph above "Status"
--- removed entirely, reclaiming the space, per Steve. (3) Row number is now
--- a real control (NanoHost_Show_RowNum, was static graphics) specifically
--- so an entire row -- LEDs, text boxes, and its number -- can be hidden
--- together when there's no scheduled performance there, rather than
--- leaving unused controls visible. BUG CAUGHT BY OWN TEST SUITE before
--- shipping: the row-visibility helper initially also forced
--- NanoHost_Show_Start/End (the Now Playing highlight LEDs) visible
--- whenever a row had data, overwriting their own separate "is this
--- actually the currently-airing performance" logic -- fixed by excluding
--- those two from the blanket row-visibility toggle, since they're governed
--- by a different, more granular concept.
---
--- v1.3.0.16: field confirmation from Steve that named string colors (not
--- just "green"/"red") work fine for BOTH LED colors and Text control fill
--- -- cyan/yellow/black all rendered correctly on real hardware; it's
--- specifically RGB tables that don't work, not named strings generally.
--- UI polish round: (1) NanoHost_Screen relocated to the Setup page's Device
--- Info section (still gated on Enable_NanoHost) -- per Steve, useful for
--- "most any system" and will have a specific use in v1.4. (2) PerfNum
--- column widened (was clipped). (3) Sold/Cancel LEDs now centered under
--- their headers instead of left-aligned at the header box's start x.
--- (4) Row numbers vertically centered (+3, matching the LEDs) instead of
--- sitting at the row's top edge. (5) The top instructions paragraph and the
--- Key legend were both split into multiple explicit shorter lines with
--- their own fixed heights, instead of one long line relying on unconfirmed
--- text-wrap behavior -- per Steve, both were getting clipped/hard to read.
---
--- v1.3.0.15: "Now Playing" highlight recreated closer to the real page's
--- own StartTime/RunTime cell-highlight approach, per Steve. Two parts:
--- (1) EXPERIMENTAL, pcall-protected attempt to color the StartTime/RunTime
--- TEXT controls themselves (cyan/yellow) -- genuinely unverified whether
--- Q-SYS's Text-style Color is even runtime-settable or what it affects;
--- can never crash the plugin even if unsupported, since it's fully
--- pcall-wrapped. (2) Guaranteed-safe fallback: the existing
--- NanoHost_Show_Start/NanoHost_Show_End marker LEDs (same controls, no
--- renaming) moved out of the FS/FE/LS/LE cluster to sit immediately next to
--- StartTime/RunTime, now using IsInvisible toggling (hidden when not the
--- currently-airing performance, visible when it is) instead of the small
--- always-visible dot used for FS/FE/LS/LE. Color is set to "green" first
--- (known-safe, always succeeds) then pcall-upgraded to cyan/yellow --
--- degrades gracefully to green if those specific strings aren't valid on
--- real hardware, same lesson as the v1.3.0.13 crash fix.
---
--- v1.3.0.14: widened the Show Schedule's "Cancel" column header (was
--- clipping the word at 25px wide) -- confirmed against a real screenshot.
---
--- v1.3.0.13 BUG FIX (real hardware crash, field report): "3114: bad
--- argument #2 to '__newindex' (string expected, got table)" -- crashing at
--- plugin STARTUP, before any poll ever ran, since blankShowSchedule() runs
--- unconditionally at startup. Root cause: Controls.X.Color only accepts a
--- STRING on real Q-SYS hardware, not an RGB table -- the opposite of what
--- was assumed when v1.3.0.12 picked RGB triples to exactly match the real
--- page's pink/lime/cyan/yellow/chocolate/orange marker colors. This was the
--- one place in the whole file that broke from the "Color is always a plain
--- string" pattern used everywhere else since v1.2, without having verified
--- it against real hardware first. Fixed by using "green" (one of only two
--- string values -- "green"/"red" -- confirmed extensively safe across this
--- entire project) for every active Show Schedule marker instead. The marker
--- LOGIC (which row/column lights up) is unaffected and still matches
--- Steve's real XML capture exactly -- only the color richness is reduced,
--- pending confirmation of which other named-color strings Q-SYS actually
--- accepts.
---
--- v1.3.0.12: Show Schedule (the nanoHost page's lower section) implemented
--- for the first time, confirmed against a real rtmandata.xml capture from
--- Steve. Provisioned for MAX_SHOWS=10 rows (fixed, per Steve). Each row:
--- StartTime/RunTime/PerfNum/Title (text), Sold (Led, Green=1/Red=0), Cancel
--- (Led, reverse logic Green=0/Red=1), and six independent row markers
--- (FS/FE/Start/End/LS/LE) colored to match the real page's own Key legend
--- exactly (pink/lime/cyan/yellow/chocolate/orange). A Screen readout was
--- also added (the bare number under <Screen> in the XML) since Steve noted
--- this specific site is "Screen 1," worth carrying forward for future
--- multi-screen sites even though it's a single fixed value today. Rows
--- beyond the actual show count, and the whole section whenever HostUp is
--- false, are blanked (same principle as the Show Timers section). Verified
--- with a full runtime test replaying Steve's actual XML capture end to end
--- -- every field and every marker color matches his screenshot exactly
--- (row 1: FS+FE; row 4: LS; no row: LE, since LE=255 is the "not
--- applicable" sentinel).
---
--- v1.3.0.11: NanoHost column headers ("Show Timers"/"Status Flags") are now
--- Bold and black (previously regular-weight via textlbl(), which didn't
--- differentiate them enough from the row labels below). Also recentered:
--- the MIDDLE of each header now sits on the demising line between that
--- column's labels and its value element (field start x for Show Timers,
--- LED start x for Status Flags), rather than centered over the column's
--- full span as in 1.3.0.10.
---
--- v1.3.0.10: NanoHost page tweaks -- (1) timer labels shifted 5px left
--- (were overlapping the field start by 5px: 170-wide label box at LX=10 has
--- a right edge of 180, but the field starts at FX+45=175); (2) timer fields
--- widened from 80 to 100px (80 was too narrow, particularly for Time of
--- Day's date+time string); (3) both "Show Timers"/"Status Flags" column
--- headers now centered over their actual column spans (label-box-start to
--- field/LED-right-edge) instead of left-aligned at the column's start x.
---
--- v1.3.0.9: NanoHost page UI rework -- working forward from the confirmed-
--- good 1.3.0.4 baseline (see REVERTED note above; 1.3.0.5-1.3.0.8 stay
--- scrapped). Show Timers and Status Flags are now one combined side-by-side
--- section instead of two stacked ones, per Steve, recreating (to a degree)
--- the real nanoHost web page's own paired-column "Control Data" table:
--- Show Timers on the left (unchanged row layout), Status Flags moved to the
--- right with labels now to the LEFT of their LEDs (reversed from before)
--- and every LED at one fixed x position so they line up in a single
--- vertical column regardless of label text length.
---
--- v1.3.0.4: fixed ASTim/AETim ticking up independently of whether their own
--- BSTim/BETim counterpart had reached 0 -- confirmed via a real side-by-side
--- capture that the device holds "after" at 0:00 until "before" reaches 0.
--- Each up-counter is now gated on its own down-counter having hit exactly 0.
---
--- v1.3.0.3: (1) the four extrapolated timers (Time Before/After Start,
--- Time Before/After End) are now clamped to NANO_TIME_MAX (255:59) --
--- confirmed via field capture that a locally-ticked up-counter could
--- otherwise walk past the device's own observed ceiling for that field.
--- (2) Time of Day is no longer read from the nanoHost at all -- per Steve,
--- it was awkward for it to sit stale for minutes at a time, so it's now
--- generated directly from the Q-SYS Core's own clock (os.date), ticked
--- every second, independent of nanoHost connectivity/HostUp/nanoValid.
---
--- v1.3.0.2: (1) nanoHost's initial /rtmandata.xml fetch now happens in the
--- same top-priority bootstrap burst as input/output names, dimmer setup,
--- and LIN scan while "Initializing" -- no longer waiting up to
--- NANO_POLL_RATE seconds for the first slow routine poll turn. (2) The four
--- fields that behave as genuine live counters (Time Before/After Start,
--- Time Before/After End) are now extrapolated locally once per second
--- between the infrequent real polls, corrected back to ground truth by each
--- new poll -- see the state-block comment near `populated`/`nanoValid` for
--- the full anti-faking design (never extrapolate before a real poll has
--- landed; blank everything whenever HostUp is false, per Steve: "any time
--- the Host Up is not true, the Time counters are not true either").
---
--- IMPORTANT: the eCNA-10 manual documents only the rendered screen, not the
--- underlying XML. The endpoint name (/rtmandata.xml) and field tags below
+-- The eCNA-10 manual documents only the rendered Management Data screen,
+-- not the underlying XML. The endpoint name (/rtmandata.xml) and field tags
 -- (HostUp/PosEna/PosOk/InSho/Sold/Cancel/RunTim/BtwTim/BSTim/ASTim/BETim/
 -- AETim/Tod) are taken from a real eCNA-5 unit's own web client source
--- (statManData.htm/statManDataJs.js) for the equivalent "Management Data"
--- screen. Per Steve: the eCNA-5 and eCNA-10 use the same CPU and the same
--- command set, so this is treated as confirmed for eCNA-10 too, not merely
--- a hint -- no separate eCNA-10 capture needed for the upper (flags/timers)
--- section. The lower "shows schedule" table (<Screen>, variable row count)
--- IS implemented -- see extractShows() below -- confirmed against a real
--- rtmandata.xml capture and shipping/working since early in the Show
--- Schedule work.
+-- (statManData.htm/statManDataJs.js) for the equivalent screen -- the
+-- eCNA-5 and eCNA-10 share the same CPU and command set, so this applies to
+-- both. The lower "show schedule" table (<Screen>, variable row count) is
+-- implemented in extractShows() below.
+--
+-- CRITICAL: never put an apostrophe inside any string VALUE passed to
+-- GetControls/GetControlLayout (Description, PrettyName, Legend, Text, or
+-- any other schema field). A single apostrophe silently drops every
+-- control on every page at design time, with no error anywhere. Apostrophes
+-- in Lua comments (like this one) are completely safe -- the rule applies
+-- only to string values Q-SYS ingests as schema. Hard-gated by
+-- test_no_apostrophes.lua before any build ships.
 
 PluginInfo = {
   Name         = "Eprad~eCNA v1.3.0.65",
@@ -384,11 +50,10 @@ function GetColor(props)
   return { 72, 147, 217 }
 end
 
--- v1.3.0.12: fixed max provisioned NanoHost Show Schedule rows -- per Steve
--- ("I would have a provision for 10 rows"), not a property, since he gave a
--- specific number directly rather than asking for user-tunability. Shared
--- by GetControls/GetControlLayout (control declarations/positions) and the
--- runtime parser (which populates rows 1..#shows and blanks the rest).
+-- Fixed provisioned row count for the NanoHost Show Schedule (not a
+-- user-tunable property). Shared by GetControls/GetControlLayout (control
+-- declarations/positions) and the runtime parser (which populates rows
+-- 1..#shows and blanks the rest).
 local MAX_SHOWS = 10
 
 -- ============================================================
@@ -400,22 +65,16 @@ local function buildPageList(props)
   local enableQDC = props["Enable_QDC_Lighting"] and props["Enable_QDC_Lighting"].Value or false
   if enableQDC then table.insert(pages, "Dimmer Control") end
   table.insert(pages, "Inputs")
-  -- v1.3.0.63 BUG FIX: coerce with tonumber() at the read boundary. Lua 5.3
-  -- raises a runtime error comparing a string to a number relationally (the
-  -- `> 0` checks below), and Q-SYS has been observed to hand back property
-  -- Values as strings in some cases -- this guarantees a real number (or
-  -- falls back to the default if the value is missing/non-numeric) no
-  -- matter what type Q-SYS actually delivers.
+  -- tonumber() guarantees a real number for the `> 0` checks below (falling
+  -- back to the default if the value is missing/non-numeric) regardless of
+  -- whether Q-SYS hands back the property Value as a string -- Lua 5.3
+  -- raises a runtime error comparing a string to a number relationally.
   local numMacros  = tonumber(props["Num_Macros"]  and props["Num_Macros"].Value)  or 50
   local numRDI     = tonumber(props["Num_RDI"]     and props["Num_RDI"].Value)     or 5
   if numMacros > 0 then table.insert(pages, "Macros") end
   if numRDI    > 0 then table.insert(pages, "RDI")    end
   table.insert(pages, "Program")
-  -- v1.3: nanoHost Management Data page, appended after Program per Steve.
-  -- Purely a Yes/No reveal -- no dependent sub-properties like QDC_Zones/
-  -- QDC_Channels, so unlike those it's fine for this one to actually be
-  -- absent from the property set's effect on the page list (nothing else
-  -- needs to stay "always visible" for reactive-redraw reasons).
+  -- nanoHost Management Data page, appended after Program.
   local enableNanoHost = props["Enable_NanoHost"] and props["Enable_NanoHost"].Value or false
   if enableNanoHost then table.insert(pages, "NanoHost") end
   return pages
@@ -440,9 +99,8 @@ end
 -- ============================================================
 function GetControls(props)
   local ctrls = {}
-  -- v1.3.0.63 BUG FIX: see buildPageList's identical comment above -- tonumber()
-  -- guarantees a real number for the `> 0` checks and the Count= fields below,
-  -- regardless of whether Q-SYS hands back the property Value as a string.
+  -- See buildPageList's identical comment above -- tonumber() guarantees a
+  -- real number for the `> 0` checks and the Count= fields below.
   local numMacros = tonumber(props["Num_Macros"] and props["Num_Macros"].Value) or 50
   local numRDI    = tonumber(props["Num_RDI"]    and props["Num_RDI"].Value)    or 5
   local enableQDC, qZones, qChannels = qdcConfig(props)
@@ -461,12 +119,9 @@ function GetControls(props)
   table.insert(ctrls, { Name="Reconnect",        ControlType="Button", Count=1, UserPin=true,  PinStyle="Input",  ButtonType="Momentary", Description="Force reconnect" })
   table.insert(ctrls, { Name="Model",            ControlType="Text",   Count=1, UserPin=true,  PinStyle="Output", Description="Device model (from RID)" })
   table.insert(ctrls, { Name="Firmware_Version", ControlType="Text",   Count=1, UserPin=true,  PinStyle="Output", Description="Firmware version (from RID)" })
-  -- v1.3.0.22: confirmed in the eCNA-10 manual's own RID documentation --
-  -- the RSP,RID record contains Device Name, Software Version, AND Screen
-  -- Id as its three codes (code 3 = "Screen Id. Decimal number: 0 to 63"),
-  -- same response we already parse Model/Firmware Version from. Always
-  -- available, independent of Enable_NanoHost -- unlike the old nanoHost-
-  -- sourced Screen control this replaces.
+  -- The RSP,RID record contains Device Name, Software Version, and Screen
+  -- Id as its three codes -- same response Model/Firmware Version are
+  -- parsed from. Always available, independent of Enable_NanoHost.
   table.insert(ctrls, { Name="Screen_Id",        ControlType="Text",   Count=1, UserPin=true,  PinStyle="Output", Description="Screen Id, 0-63 (from RID)" })
 
   -- Program state (all text outputs from RST polling)
@@ -531,11 +186,6 @@ function GetControls(props)
   table.insert(ctrls, { Name="Out_Names", ControlType="Text", Count=16, UserPin=true, PinStyle="Output", Description="User-defined Aux Output names (Out1-Out16)" })
 
   -- Web scrape output/input flag indicators (LED indicators, driven by scrape)
-  -- (Outputs 1-44 removed in v1.2.0.20 -- it was a write-only internal
-  -- mirror with no PrettyName/layout and nothing ever read it back;
-  -- flagActive() derives directly from the parsed flag list instead. Kept
-  -- as a Control it only produced 88 permanent plugin-checker complaints
-  -- for zero functional benefit.)
   table.insert(ctrls, { Name="Inputs",  ControlType="Indicator", IndicatorType="Led", Count=31, UserPin=true, PinStyle="Output", Description="Input flags (web scrape)" })
 
   -- Name refresh trigger buttons
@@ -549,9 +199,9 @@ function GetControls(props)
     table.insert(ctrls, { Name="Zone_Preset",         ControlType="Button", Count=qZones*5,   UserPin=true, PinStyle="Both",   ButtonType="Toggle", Description="Zone light preset, 5 per zone in order Up/Down/Mid1/Mid2/None" })
     table.insert(ctrls, { Name="Zone_Offset",         ControlType="Knob",   ControlUnit="Percent", Count=qZones,     UserPin=true, PinStyle="Both",   Min=-100, Max=100, Description="Zone light level offset %, -100 to +100" })
     table.insert(ctrls, { Name="Zone_Offset_Text",    ControlType="Text",   Count=qZones,     UserPin=true, PinStyle="Both",   Description="Zone light level offset % (editable), -100 to +100" })
-    -- v1.2.0.41: momentary step buttons beside the offset readout. A quick
-    -- press/release nudges the offset by 1; holding past 2s repeats at 1
-    -- unit per 0.5s until released. ButtonType="Momentary" (not "Toggle" or
+    -- Momentary step buttons beside the offset readout: a quick press/
+    -- release nudges the offset by 1; holding past 2s repeats at 1 unit per
+    -- 0.5s until released. ButtonType="Momentary" (not "Toggle" or
     -- "Trigger") so Boolean genuinely tracks pressed/held/released, which
     -- the hold-to-repeat timer logic below depends on.
     table.insert(ctrls, { Name="Zone_Offset_Dec",     ControlType="Button", Count=qZones,     UserPin=true, PinStyle="Both",   ButtonType="Momentary", Description="Decrease zone offset by 1; hold to repeat at 1 per 0.5s after 2s" })
@@ -560,22 +210,14 @@ function GetControls(props)
     table.insert(ctrls, { Name="Channel_Level_Text",  ControlType="Text",   Count=qChannels,  UserPin=true, PinStyle="Output", Description="Dimmer channel output level % (text)" })
     table.insert(ctrls, { Name="Channel_Zone",        ControlType="Text",   Count=qChannels,  UserPin=true, PinStyle="Output", Description="Zone name assigned to this dimmer channel" })
     table.insert(ctrls, { Name="Channel_Present",     ControlType="Indicator", IndicatorType="Led", Count=qChannels, UserPin=true, PinStyle="Output", Description="Lit when this channel has reported a non-zero level at least once; goes dark after 2 consecutive 0% polls where a non-zero level was expected (likely no dimmer/power present)" })
-    -- Refresh_Dimmer_Setup and Refresh_LIN_Network consolidated into the
-    -- single Refresh_Setup control above (v1.2.0.11).
     table.insert(ctrls, { Name="QDC_Board_Count",       ControlType="Text",   Count=1, UserPin=true, PinStyle="Output", Description="Number of active QDC-400 boards found on the Local I/O (LIN) Network at last check" })
   end
 
-  -- (Last_Tx/Last_Rx/Last_Error and the Debug tab that displayed them were
-  -- removed entirely in v1.2.0.21 -- every value they ever showed was
-  -- already duplicated to the Q-SYS Debug window via dbg()/print(), which
-  -- is unconditionally active and is what's actually used for
-  -- troubleshooting in practice. See the help file for the full note.)
-
-  -- ── nanoHost POS Management Data (v1.3, only when Enable_NanoHost=Yes) ──
+  -- ── nanoHost POS Management Data (only when Enable_NanoHost=Yes) ──
   -- Informational only -- nothing here causes any action. The six status
   -- flags are Indicator/Led controls so they get BOTH a colored LED on the
-  -- page AND a true/false output pin per Steve's spec, same pattern as
-  -- Channel_Present above. Green=1/Red=0 for all except NanoHost_Cancel,
+  -- page AND a true/false output pin, same pattern as Channel_Present
+  -- above. Green=1/Red=0 for all except NanoHost_Cancel,
   -- which is reverse logic (Green=0/not cancelled, Red=1/cancelled) -- see
   -- setNanoFlag()/setNanoFlagRev() in the runtime section.
   local enableNanoHost = props["Enable_NanoHost"] and props["Enable_NanoHost"].Value or false
@@ -599,31 +241,23 @@ function GetControls(props)
     table.insert(ctrls, { Name="NanoHost_TimeBeforeEnd",     ControlType="Text", Count=1, UserPin=true, PinStyle="Output", Description="Time Before Feature End, MM:SS" })
     table.insert(ctrls, { Name="NanoHost_TimeAfterEnd",      ControlType="Text", Count=1, UserPin=true, PinStyle="Output", Description="Time After Feature End, MM:SS" })
 
-    -- ── Show Schedule (v1.3.0.12) ──────────────────────────────────
-    -- Confirmed against a real rtmandata.xml capture: <Screen> carries a
-    -- bare screen number before its <StartTime> children. Each <StartTime>
-    -- element carries both its own text (the date/time) AND child elements
-    -- (RunTime/PerfNum/Sold/Cancel/Title) -- confirmed structure, not a
-    -- guess. Provisioned for MAX_SHOWS=10 rows per Steve; rows beyond the
-    -- actual show count for the day are blanked at runtime.
+    -- ── Show Schedule ──────────────────────────────────
+    -- <Screen> carries a bare screen number before its <StartTime>
+    -- children. Each <StartTime> element carries both its own text (the
+    -- date/time) AND child elements (RunTime/PerfNum/Sold/Cancel/Title).
+    -- Provisioned for MAX_SHOWS=10 rows; rows beyond the actual show count
+    -- for the day are blanked at runtime.
     --
-    -- v1.3.0.22: the Screen control that used to live here (sourced from
-    -- <Screen> in nanoHost's own rtmandata.xml, gated behind Enable_
-    -- NanoHost) is GONE -- per Steve, screen identity is a general eCNA
-    -- property, not a nanoHost-specific one, and it's redundant to depend
-    -- on nanoHost being enabled just to know which screen this is. It's
-    -- now Screen_Id, sourced from the CAI CMD,RID response (see parseRID)
-    -- alongside Model/Firmware Version -- confirmed in the eCNA-10 manual's
-    -- own RID documentation (code 3 of the record is explicitly "Screen
-    -- Id. Decimal number: 0 to 63"), not a guess. Always available,
-    -- completely independent of Enable_NanoHost -- declared unconditionally
-    -- near Model/Firmware Version above.
-    -- v1.3.0.17: row number is now a real control (was static graphics
-    -- text) specifically so it can be hidden along with everything else in
-    -- a row that has no associated performance -- per Steve, "it would be a
-    -- lot cleaner if all of the unused LEDs and boxes weren't there." Value
-    -- is set once at startup (it never changes -- row 3 is always "3") and
-    -- its IsInvisible is toggled together with the rest of the row.
+    -- Screen identity (Screen_Id, on the Setup page) is sourced from the
+    -- CAI CMD,RID response instead of nanoHost's own <Screen> tag, since
+    -- it's a general eCNA property rather than a nanoHost-specific one --
+    -- always available, independent of Enable_NanoHost.
+    --
+    -- Row number is a real control (not static graphics text) so it can be
+    -- hidden along with everything else in a row that has no associated
+    -- performance. Value is set once at startup (it never changes -- row 3
+    -- is always "3") and its IsInvisible is toggled together with the rest
+    -- of the row.
     table.insert(ctrls, { Name="NanoHost_Show_RowNum", ControlType="Text", Count=MAX_SHOWS, UserPin=true, PinStyle="Output", Description="Show Schedule: row number (hidden along with the rest of the row when no performance is scheduled there)" })
 
     table.insert(ctrls, { Name="NanoHost_Show_StartTime", ControlType="Text", Count=MAX_SHOWS, UserPin=true, PinStyle="Output", Description="Show Schedule: performance start date/time" })
@@ -633,18 +267,16 @@ function GetControls(props)
     table.insert(ctrls, { Name="NanoHost_Show_Cancel",    ControlType="Indicator", IndicatorType="Led", Count=MAX_SHOWS, UserPin=true, PinStyle="Output", Description="Show Schedule: performance cancelled (reverse logic: Green=0/not cancelled, Red=1/cancelled)" })
     table.insert(ctrls, { Name="NanoHost_Show_Title",     ControlType="Text", Count=MAX_SHOWS, UserPin=true, PinStyle="Output", Description="Show Schedule: title" })
 
-    -- Row markers, matching the real page's own Key legend/colors exactly
-    -- (confirmed via a real screenshot): First Show Start=pink, First Show
-    -- End=lime, Show Start=cyan, Show End=yellow, Last Show Start=chocolate,
-    -- Last Show End=orange. Per Steve's explanation: FS/LS mark which row is
-    -- the day's first/last performance (pinned there until that specific
-    -- show ends); FE/LE only light up while that specific (first/last) show
-    -- is actually airing; Start/End are the generic "currently airing"
-    -- pointer, independent of first/last. All six are independent and can
-    -- overlap on the same row (confirmed: FS and FE both point at row 0 in
-    -- the sample capture, shown as two separate colored cells at once) --
-    -- so these stay as six separate indicators per row, not collapsed into
-    -- one "priority" color.
+    -- Row markers, matching the real page's own Key legend/colors: First
+    -- Show Start=pink, First Show End=lime, Show Start=cyan, Show End=
+    -- yellow, Last Show Start=chocolate, Last Show End=orange. FS/LS mark
+    -- which row is the day's first/last performance (pinned there until
+    -- that specific show ends); FE/LE mark that specific (first/last) show
+    -- while it's actually airing/between shows; Start/End are the generic
+    -- "currently airing" pointer, independent of first/last. All six are
+    -- independent and can overlap on the same row, so they stay as six
+    -- separate indicators per row rather than one collapsed "priority"
+    -- color.
     table.insert(ctrls, { Name="NanoHost_Show_FS",    ControlType="Indicator", IndicatorType="Led", Count=MAX_SHOWS, UserPin=true, PinStyle="Output", Description="Show Schedule marker: First Show Start" })
     table.insert(ctrls, { Name="NanoHost_Show_FE",    ControlType="Indicator", IndicatorType="Led", Count=MAX_SHOWS, UserPin=true, PinStyle="Output", Description="Show Schedule marker: First Show End" })
     table.insert(ctrls, { Name="NanoHost_Show_Start", ControlType="Indicator", IndicatorType="Led", Count=MAX_SHOWS, UserPin=true, PinStyle="Output", Description="Show Schedule marker: Show Start (currently-airing performance)" })
@@ -663,12 +295,11 @@ function GetControls(props)
     table.insert(ctrls, { Name="NanoHost_DayEndOffset_Text", ControlType="Text", Count=1, UserPin=true, PinStyle="Both", Description="Day End offset, minutes (editable), -60 to +240" })
     table.insert(ctrls, { Name="NanoHost_DayEndOffset_Dec", ControlType="Button", ButtonType="Momentary", Count=1, UserPin=true, PinStyle="Both", Description="Decrease Day End offset by 1 minute; hold to repeat" })
     table.insert(ctrls, { Name="NanoHost_DayEndOffset_Inc", ControlType="Button", ButtonType="Momentary", Count=1, UserPin=true, PinStyle="Both", Description="Increase Day End offset by 1 minute; hold to repeat" })
-    -- First Show End: now has a state LED (added per Steve, matching Day
-    -- Start/Day End/Last Show Start), plus the Trigger. Fires/turns on on
-    -- either FE-plus-offset reaching its threshold, or on FE itself dropping
-    -- false first if the offset delay ran long enough to overlap the next
-    -- show; the LED turns off exactly when FE itself goes false (the same
-    -- moment the next show's own Time Before Feature Start reaches 0:00).
+    -- First Show End: state LED plus Trigger. Turns/fires on either
+    -- FE-plus-offset reaching its threshold, or on FE itself dropping false
+    -- first if the offset delay ran long enough to overlap the next show;
+    -- the LED turns off exactly when FE itself goes false (the same moment
+    -- the next show's own Time Before Feature Start reaches 0:00).
     table.insert(ctrls, { Name="NanoHost_FirstShowEnd", ControlType="Indicator", IndicatorType="Led", Count=1, UserPin=true, PinStyle="Output", Description="First Show End: true once the Trigger conditions are met, until FE goes low" })
     table.insert(ctrls, { Name="NanoHost_FirstShowEnd_Trigger", ControlType="Indicator", IndicatorType="Led", Count=1, UserPin=true, PinStyle="Output", Description="Pulses once when First Show End conditions are met: FE plus StartTime, RunTime and Offset reached, or FE goes false first" })
     table.insert(ctrls, { Name="NanoHost_FirstShowEndOffset", ControlType="Knob", ControlUnit="Integer", Count=1, UserPin=true, PinStyle="Both", Min=-60, Max=60, Description="First Show End offset from the first show StartTime plus RunTime, minutes (-60 to +60)" })
@@ -677,7 +308,7 @@ function GetControls(props)
     table.insert(ctrls, { Name="NanoHost_FirstShowEndOffset_Inc", ControlType="Button", ButtonType="Momentary", Count=1, UserPin=true, PinStyle="Both", Description="Increase First Show End offset by 1 minute; hold to repeat" })
     -- Last Show Start: state LED + trigger, same shape as Day Start, but
     -- gated on LS instead of FS, and with no extra "currently airing" gate
-    -- (per Steve's stated conditions: LS true AND StartTime+Offset true).
+    -- -- true whenever LS is true AND StartTime+Offset is reached.
     table.insert(ctrls, { Name="NanoHost_LastShowStart", ControlType="Indicator", IndicatorType="Led", Count=1, UserPin=true, PinStyle="Output", Description="Last Show Start: true from (last show StartTime + offset) until LS goes low" })
     table.insert(ctrls, { Name="NanoHost_LastShowStartOffset", ControlType="Knob", ControlUnit="Integer", Count=1, UserPin=true, PinStyle="Both", Min=-90, Max=60, Description="Last Show Start offset from the last show StartTime, minutes (-90 to +60)" })
     table.insert(ctrls, { Name="NanoHost_LastShowStart_Trigger", ControlType="Indicator", IndicatorType="Led", Count=1, UserPin=true, PinStyle="Output", Description="Pulses once (rising edge) when Last Show Start turns true" })
@@ -696,75 +327,27 @@ function GetProperties(props)
   local list = {
     { Name="Num_Macros",  Type="integer",  Min=0,   Max=50, Value=50 },
     { Name="Num_RDI",     Type="integer",  Min=0,   Max=5,  Value=5  },
-    -- v1.2.0.14: renamed from Poll_Rate/Scrape_Rate (which were integer in
-    -- v1.1) to avoid the same caching issue that hit the float->double fix
-    -- -- Designer appears to cache a property's TYPE on an already-placed
-    -- instance, requiring a full remove/re-add to pick up a type change on
-    -- an EXISTING property name. A brand-new name has no stale type to
-    -- conflict with, so existing installs should just gain this as a new
-    -- property (with the old integer one quietly dropping off) without
-    -- needing to be torn out and replaced -- at the cost of losing
-    -- whatever custom rate they'd set, back to the default, once.
-    -- v1.2.0.45: Poll_Interval REMOVED from Properties entirely -- its only
-    -- real purpose (confirmed against the eCNA-10 manual, page 89, item 1)
-    -- is keeping the CAI channel from being bumped by a second client after
-    -- 60s idle, not a user-tunable responsiveness knob like Scrape/
-    -- LightPoll_Interval. There's no legitimate reason for an installer to
-    -- ever change it, so per Steve it now lives as a fixed internal
-    -- constant (POLL_RATE, see below) instead of a Designer-exposed
-    -- property. Any existing instance with a custom Poll_Interval value
-    -- quietly drops it, same as the old integer Poll_Rate/Scrape_Rate
-    -- properties did when renamed in v1.2.0.14 above.
+    -- Poll_Interval is not user-tunable: its only purpose is keeping the CAI
+    -- channel from being bumped by a second client after 60s idle, not a
+    -- responsiveness knob like Scrape/LightPoll_Interval, so it lives as a
+    -- fixed internal constant (POLL_RATE, see below) instead of a property.
     { Name="Scrape_Interval", Type="double",  Min=0.5,   Max=20, Value=2  },
-    -- v1.2.0.41: decouples the dimmer LIGHTPOLL (/rtLights.xml) from
-    -- Scrape_Interval. Previously LIGHTPOLL consumed every OTHER routine
-    -- turn no matter how low Scrape_Interval was set -- so lowering
-    -- Scrape_Interval alone never actually sped up real scrape cadence, it
-    -- just meant scrape and lightpoll got faster together (real
-    -- scrape-to-scrape gap stayed ~2x whatever the "turn" cost was). Now
-    -- LIGHTPOLL runs on its own slower cadence and Scrape_Interval controls
-    -- real scrape cadence directly. Default of 3s (rounds to the same 1:1
-    -- alternation as before at the default Scrape_Interval of 2s, so
-    -- out-of-the-box behavior is unchanged) -- field-tested by Steve at a
-    -- range of Scrape_Interval values down to 0.5s with no issues; a
-    -- LightPoll_Interval of 3 (vs. the field-tested default Scrape_Interval
-    -- of 2) noticeably improved offset-change responsiveness over the
-    -- initial 4s figure. Meter animation between real polls already masks
-    -- the slower dimmer refresh (per Steve: "we're already 'faking' the
-    -- dimmer meters with our animation"), so LIGHTPOLL doesn't need to be
-    -- nearly as frequent as scrape once they're no longer forced to share a
-    -- turn 1:1.
-    -- v1.2.0.45: Max reduced from 60 to 20, same reasoning as
-    -- Scrape_Interval above -- no legitimate reason to run slower than
-    -- that; higher values were only ever useful for testing/comparison.
+    -- The dimmer LIGHTPOLL (/rtLights.xml) runs on its own slower cadence,
+    -- decoupled from Scrape_Interval, so Scrape_Interval controls real
+    -- scrape cadence directly rather than both moving together. Meter
+    -- animation between real polls already masks the slower dimmer refresh,
+    -- so LIGHTPOLL doesn't need to be nearly as frequent as scrape.
     { Name="LightPoll_Interval", Type="double", Min=0.5, Max=20, Value=3 },
     { Name="Enable_QDC_Lighting", Type="boolean",  Value=false },
-    -- v1.3.0.65: QDC_Zones/QDC_Channels are now conditionally hidden behind
-    -- Enable_QDC_Lighting via RectifyProperties (see below), instead of
-    -- always being shown. The v1.2-era belief that Designer's properties
-    -- dialog didn't reliably redraw on a reactive property-set change was
-    -- retested with a minimal, isolated experiment (RectifyProperties +
-    -- props[Name].IsHidden, same mechanism, no other changes) and it DID
-    -- redraw correctly -- Steve confirmed on the bench. Given this project's
-    -- own history with the apostrophe bug (a single apostrophe in a
-    -- Description silently drops every control on every page, no error --
-    -- see the design notes), it's likely the original v1.2 abandonment was
-    -- actually a syntax violation misattributed to the hiding attempt
-    -- itself, not a real Designer limitation. They only take effect once
-    -- Enable_QDC_Lighting=Yes either way.
-    -- v1.2.0.47: Min relaxed from 2 to 1. Zone 1/2 are fixed by the eCNA as
-    -- "House"/"Stage", but that's just how the device names them -- nothing
-    -- requires an installation to actually use both. A single-zone site
-    -- (House only) can now be configured that way instead of always
-    -- carrying an unused Stage row. (This was previously untested at 1 --
-    -- a real Q-SYS quirk around single-count controls made it silently
-    -- broken; that's fixed in this same build, see the runtime comment
-    -- near qdcZones/qdcChannels.)
+    -- QDC_Zones/QDC_Channels are conditionally hidden behind
+    -- Enable_QDC_Lighting via RectifyProperties (see below); they only take
+    -- effect once Enable_QDC_Lighting=Yes. Zone 1/2 are fixed by the eCNA as
+    -- "House"/"Stage", but nothing requires an installation to use both --
+    -- Min=1 allows a single-zone (House only) configuration.
     { Name="QDC_Zones",    Type="integer", Min=1, Max=16, Value=2 },
     { Name="QDC_Channels", Type="integer", Min=1, Max=16, Value=2 },
-    -- v1.3: reveals the NanoHost page (appended after Program) and adds it
-    -- to the HTTP poll rotation. No dependent sub-properties, so (unlike
-    -- QDC_Zones/QDC_Channels) there's no "always visible" requirement here.
+    -- Reveals the NanoHost page (appended after Program) and adds it to the
+    -- HTTP poll rotation.
     { Name="Enable_NanoHost", Type="boolean", Value=false },
   }
   return list
@@ -782,12 +365,7 @@ function RectifyProperties(props)
     elseif v > 16 then props["QDC_Channels"].Value = 16 end
   end
 
-  -- v1.3.0.65: hide QDC_Zones/QDC_Channels unless Enable_QDC_Lighting=Yes --
-  -- see the comment above Enable_QDC_Lighting in GetProperties for why this
-  -- is safe now, after being avoided since v1.2. Pattern confirmed against
-  -- the KeyDigital KD-WP8-2+ reference plugin's RectifyProperties, and
-  -- proven on the bench in an isolated experimental build before folding it
-  -- in here.
+  -- Hide QDC_Zones/QDC_Channels unless Enable_QDC_Lighting=Yes.
   if props["Enable_QDC_Lighting"] then
     local qdcOn = props["Enable_QDC_Lighting"].Value == true
     if props["QDC_Zones"]    then props["QDC_Zones"].IsHidden    = not qdcOn end
@@ -821,20 +399,17 @@ function GetControlLayout(props)
   local graphics = {}
   local pages    = buildPageList(props)
   local CurrentPage = pages[props["page_index"].Value]
-  -- v1.3.0.63 BUG FIX: see buildPageList's identical comment above -- also
-  -- guards the `for i = 1, numMacros do` / `for dev = 1, numRDI do` loops
-  -- further down, which Lua 5.3 requires to be real numbers.
+  -- See buildPageList's identical comment above -- also guards the
+  -- `for i = 1, numMacros do` / `for dev = 1, numRDI do` loops further
+  -- down, which Lua 5.3 requires to be real numbers.
   local numMacros = tonumber(props["Num_Macros"] and props["Num_Macros"].Value) or 50
   local numRDI    = tonumber(props["Num_RDI"]    and props["Num_RDI"].Value)    or 5
   local enableQDC, qZones, qChannels = qdcConfig(props)
 
   local LX  = 10    -- left margin
-  -- v1.2.0.41: widened from 540 to fit the new Offset step (-/+) buttons on
-  -- the Dimmer Control page, to the right of the Offset % text readout.
-  -- Shared across all pages for a consistent look (widens header bars/
-  -- warning-text wrapping slightly elsewhere too, but doesn't move or
-  -- rearrange any other page's actual controls, which are all positioned
-  -- at fixed offsets from LX).
+  -- Wide enough to fit the Offset step (-/+) buttons on the Dimmer Control
+  -- page, to the right of the Offset % text readout. Shared across all
+  -- pages for a consistent look.
   local W   = 630   -- page width
   local FX  = 130   -- field/control start x
 
@@ -852,10 +427,8 @@ function GetControlLayout(props)
     table.insert(graphics, { Type="Label", Text=text, Position={x, y}, Size={w, size or 14},
       HTextAlign=align or "Left", FontSize=size and math.floor(size*0.75) or 11 })
   end
-  -- v1.2.0.48 BUG FIX: a control declared with Count=1 is NOT an array on
-  -- the Q-SYS side -- its layout key must be the bare control Name, with no
-  -- " 1" suffix (confirmed against QSC's own "Building a Plugin" debug-pin
-  -- example: Count=1 paired with layout["code"], never layout["code 1"]).
+  -- A control declared with Count=1 is NOT an array on the Q-SYS side --
+  -- its layout key must be the bare control Name, with no " 1" suffix.
   -- Every layout[Name.." "..i] built below for a control whose real Count
   -- can be exactly 1 -- Zone_Name/Zone_Offset*/Channel_* (QDC_Zones and
   -- QDC_Channels both now allow 1, see GetProperties) and Macros (Num_Macros
@@ -905,11 +478,8 @@ function GetControlLayout(props)
     lbl(LX, y, 115, 'Firmware:', 16)
     layout["Firmware_Version"] = { PrettyName="Setup~Firmware", Style="Text", IsReadOnly=true, Position={FX,y}, Size={180,22} }
     y = y + 28
-    -- v1.3.0.22: Screen Id, from the same CAI RID response as Model/
-    -- Firmware Version above (confirmed in the manual: the RID record's
-    -- third code is explicitly "Screen Id") -- always shown, unconditional,
-    -- no longer tied to Enable_NanoHost at all (that dependency was the
-    -- whole reason for this change, per Steve).
+    -- Screen Id, from the same CAI RID response as Model/Firmware Version
+    -- above -- always shown, unconditional, not tied to Enable_NanoHost.
     lbl(LX, y, 115, 'Screen Id:', 16)
     layout["Screen_Id"] = { PrettyName="Setup~Screen Id", Style="Text", IsReadOnly=true, Position={FX,y}, Size={60,22} }
     y = y + 36
@@ -1081,7 +651,7 @@ function GetControlLayout(props)
     local offTxtX   = faderX + faderW + 6
     local offTxtW   = 40
     local rowH      = 26
-    -- v1.2.0.41: -/+ step buttons, placed to the right of the Offset % text
+    -- -/+ step buttons, placed to the right of the Offset % text
     -- readout (not beside the fader itself) with a deliberate gap -- so
     -- someone dragging the slider has no chance of also catching a step
     -- button by accident. Sized to match the preset buttons exactly
@@ -1106,11 +676,11 @@ function GetControlLayout(props)
         local idx = (i-1)*5 + b
         layout["Zone_Preset "..idx] = { PrettyName="Dimmer Control~Zone "..i.." "..presetLabels[b], Style="Button", ButtonStyle="Toggle", Legend=presetLabels[b], Position={presetX+(b-1)*presetBW, y}, Size={presetBW-2, rowH-4} }
       end
-      -- Color must be an RGB table, not a string -- confirmed against a
-      -- working reference plugin (DSS_Server) and verified on both
-      -- Windows 10 and 11. Every earlier attempt here used a string
-      -- ("blue", "Blue", a hex string), which was simply the wrong data
-      -- type -- not a Designer-version quirk as previously suspected.
+      -- Color for a Fader control must be an RGB table, not a string --
+      -- confirmed against a working reference plugin (DSS_Server) and
+      -- verified on both Windows 10 and 11. A string value here
+      -- ("blue", "Blue", a hex string) is simply the wrong data type for
+      -- this control's Color property.
       layout[layoutKey("Zone_Offset", qZones, i)]      = { PrettyName="Dimmer Control~Zone "..i.." Offset",      Style="Fader", Orientation="Horizontal", Color={72,147,217}, Min=-100, Max=100, Position={faderX, y}, Size={faderW, rowH-4} }
       layout[layoutKey("Zone_Offset_Text", qZones, i)] = { PrettyName="Dimmer Control~Zone "..i.." Offset Text", Style="Text", Position={offTxtX, y}, Size={offTxtW, rowH-4} }
       -- ButtonStyle="Momentary" to match the Momentary ControlType declared
@@ -1312,52 +882,37 @@ function GetControlLayout(props)
   -- ================================================================
   elseif CurrentPage == "NanoHost" then
     local y = 10
-    -- v1.3.0.17: instructions paragraph removed entirely per Steve ("The
-    -- Text above 'Status' can be removed... and the space reclaimed").
-
-    -- v1.3.0.9: Show Timers (left) and Status Flags (right) combined into
-    -- one side-by-side section, per Steve, to recreate (to a degree) the
-    -- real nanoHost web page's own "Control Data" table layout (Name/MM:SS
-    -- paired with Name/Flag columns -- see manual Sec. 5.10 / the eCNA-5
-    -- reference capture). Status Flags moved to the right with the LEDs to
-    -- the right of their labels (reversed from the old left-LED layout) --
-    -- LED_X is a single fixed x for every flag row, so all six LEDs land in
-    -- one vertical column regardless of label text length, same principle
-    -- as the timers column's fields already lining up via a fixed FX.
+    -- Show Timers (left) and Status Flags (right), side by side, to
+    -- recreate (to a degree) the real nanoHost web page's own "Control
+    -- Data" table layout (Name/MM:SS paired with Name/Flag columns -- see
+    -- manual Sec. 5.10). Status Flags has its LEDs to the right of their
+    -- labels; LED_X is a single fixed x for every flag row, so all six
+    -- LEDs land in one vertical column regardless of label text length,
+    -- same principle as the timers column's fields lining up via a fixed
+    -- FX.
     hdr(y, 'Status', 18)
     y = y + 24
 
     -- Column geometry, named so the header-centering math below always
     -- matches the actual row layout, rather than duplicated magic numbers.
-    local TLX = LX - 5      -- timer label box start x (v1.3.0.10: shifted 5px
-                             -- left of LX -- label box was 170 wide starting
-                             -- at LX=10, right edge=180, which is 5px PAST
-                             -- the field's start at FX+45=175; this closes
-                             -- that overlap instead of crowding the field)
+    local TLX = LX - 5      -- timer label box start x
     local TLW = 170          -- timer label box width
     local TFX = FX + 45      -- timer field start x
-    local TFW = 100          -- timer field width (v1.3.0.10: widened from 80
-                             -- -- 80 was too narrow for values like a full
-                             -- date+time Time-of-Day string)
+    local TFW = 100          -- timer field width
     local RLX = 340          -- flag label box start x
     local RLW = 150          -- flag label box width
     local LED = 14
     local LED_X = RLX + RLW + 10  -- fixed x for every LED -- vertical alignment
 
     -- Column headers: bold + black for stronger visual differentiation from
-    -- the row labels below them (v1.3.0.11 -- textlbl()'s regular-weight
-    -- style wasn't standing out enough), and centered so the MIDDLE of the
-    -- header text sits on the demising line between each column's labels
-    -- and its value element (field start x=TFX for Show Timers, LED start
-    -- x=LED_X for Status Flags) -- not centered over the column's full
-    -- span as in 1.3.0.10. Built directly rather than via textlbl(), which
+    -- the row labels below them, and centered so the MIDDLE of the header
+    -- text sits on the dividing line between each column's labels and its
+    -- value element (field start x=TFX for Show Timers, LED start x=LED_X
+    -- for Status Flags). Built directly rather than via textlbl(), which
     -- has no TextColor/IsBold parameters and is shared by many regular-
     -- weight labels elsewhere in the file that shouldn't be affected.
-    --
-    -- v1.3.0.21: FontStyle="Bold" confirmed to do NOTHING on this Label
-    -- type (Steve reported no visible weight change) -- removed. IsBold
-    -- confirmed working via the real Q-SYS SDK schema -- added in its
-    -- place. FontSize kept at 13 (unchanged from 1.3.0.17).
+    -- IsBold=true is the lever for bold text on a graphics Label --
+    -- FontStyle="Bold" has no visible effect on this Label type.
     local HDR_W = 180
     table.insert(graphics, { Type="Label", Text="Show Timers",
       Position={TFX - HDR_W/2, y}, Size={HDR_W, 18},
@@ -1367,9 +922,6 @@ function GetControlLayout(props)
       HTextAlign="Center", FontSize=13, IsBold=true, TextColor={0,0,0} })
     y = y + 22
 
-    -- v1.3.0.26: label text updated per Steve -- control NAMES unchanged
-    -- (NanoHost_TimeOfShow etc.), so any existing pin wiring is unaffected;
-    -- only the on-screen labels/PrettyNames change.
     local timerRows = {
       {"NanoHost_TimeOfDay",        "Time of Day"},
       {"NanoHost_TimeOfShow",       "Feature Run Time"},
@@ -1413,14 +965,12 @@ function GetControlLayout(props)
     hdr(y, 'Show Schedule', 18)
     y = y + 22
 
-    -- Column x positions -- v1.3.0.15: Start/End highlight LEDs moved out of
-    -- the small marker cluster (which now holds only FS/FE/LS/LE) and repositioned
-    -- immediately adjacent to StartTime/RunTime respectively -- per Steve,
-    -- these two specifically represent "this is the currently-airing
-    -- performance," which on the real page is a background highlight on the
-    -- StartTime/RunTime cells themselves (cyan/yellow), not a separate
-    -- marker column. Same NanoHost_Show_Start/NanoHost_Show_End controls as
-    -- before (just relocated + restyled), so no control/pin renaming.
+    -- Column x positions. The small marker cluster holds only FS/FE/LS/LE;
+    -- Start/End highlight LEDs sit immediately adjacent to StartTime/
+    -- RunTime instead, since those two represent "this is the currently-
+    -- airing performance," which on the real page is a background
+    -- highlight on the StartTime/RunTime cells themselves (cyan/yellow),
+    -- not a separate marker column.
     local SNO_X    = LX
     local SFS_X    = SNO_X + 24
     local SFE_X    = SFS_X + 18
@@ -1431,18 +981,16 @@ function GetControlLayout(props)
     local SENDHL_X   = SST_X + 130 + 2   -- End highlight LED, immediately before RunTime
     local SRT_X      = SENDHL_X + 16     -- RunTime
     local SPN_X    = SRT_X + 45    -- PerfNum
-    local SPN_W    = 55            -- v1.3.0.16: widened from 35 -- "PerfNum" was clipped
+    local SPN_W    = 55            -- "PerfNum" needs more width than a narrower column would give
     local SSOLD_X  = SPN_X + SPN_W -- Sold
     local SCAN_X   = SSOLD_X + 25  -- Cancel
-    local STITLE_X = SCAN_X + 45   -- Title (v1.3.0.14: Cancel's header needs
-                                    -- more room than the Sold/PerfNum columns
-                                    -- -- was clipping "Cancel" at 25px wide)
+    local STITLE_X = SCAN_X + 45   -- Title ("Cancel" needs more header room than Sold/PerfNum)
     local SLED     = 12
     local SROWH    = 20
-    -- v1.3.0.16: Sold/Cancel LEDs centered under their headers rather than
+    -- Sold/Cancel LEDs centered under their headers rather than
     -- left-aligned at the header box's start x.
     local SSOLD_LED_X = SSOLD_X + (25 - SLED) / 2
-    local SCAN_LED_X  = SCAN_X  + (45 - SLED) / 2 - 4  -- v1.3.0.21: shifted 4px left per Steve, to better center under "Cancel"
+    local SCAN_LED_X  = SCAN_X  + (45 - SLED) / 2 - 4  -- shifted 4px left to better center under "Cancel"
 
     -- Column headers (FS/FE/LS/LE only -- Start/End highlights sit right
     -- next to StartTime/RunTime below, with no separate header needed since
@@ -1460,35 +1008,21 @@ function GetControlLayout(props)
     textlbl(STITLE_X, y, (W-20)-STITLE_X, 'Title', 12)
     y = y + 18
 
-    -- v1.3.0.22: layout-time defaults now match each marker's own color
-    -- (pink/lime/chocolate/orange) instead of a uniform green, consistent
-    -- with the runtime off-color fix -- Boolean=false dims whatever Color
-    -- is set, so this gives each marker its own dark shade from the very
-    -- first render, before any poll has even landed. Same value TYPE
-    -- (plain string) as everything else already confirmed safe -- no new
-    -- risk vector, just a different string.
-    --
-    -- v1.3.0.23: FE's layout-time default changed from "lime" to "green" --
-    -- these are pre-poll, i.e. inactive/off, states, and lime was confirmed
-    -- to not read as dimmed the way green does (see setMarkerLed's comment).
-    --
-    -- v1.3.0.24: all four now use a uniform "darkgray" pre-poll default,
-    -- matching the runtime off-color convention.
-    --
-    -- v1.3.0.25: switched to "dimgray" -- per Steve, and confirmed correct
-    -- CSS-naming-wise: despite the names, "dimgray" (rgb 105,105,105) is
-    -- actually darker/more muted than "darkgray" (rgb 169,169,169) -- same
-    -- naming trap as lime being brighter than green.
+    -- Layout-time (pre-poll) default color for each marker -- Boolean=false
+    -- dims whatever Color is set, so this gives each marker its own dark
+    -- shade from the very first render, before any poll has landed.
+    -- "dimgray" (rgb 105,105,105) is the uniform off-color for all four --
+    -- despite the names, it's actually darker/more muted than "darkgray"
+    -- (rgb 169,169,169), the same naming trap as lime being brighter than
+    -- green.
     local MARKER_OFF_FS = "dimgray"
     local MARKER_OFF_FE = "dimgray"
     local MARKER_OFF_LS = "dimgray"
     local MARKER_OFF_LE = "dimgray"
     for i = 1, MAX_SHOWS do
       local ry = y + (i-1)*SROWH
-      -- v1.3.0.16: row number vertically centered (+3, matching the LEDs'
-      -- own vertical offset) instead of sitting at the row's top edge.
-      -- v1.3.0.17: real control now (was static graphics) -- see
-      -- GetControls comment; value set once at startup, IsInvisible toggled
+      -- Row number vertically centered (+3, matching the LEDs' own
+      -- vertical offset). Value set once at startup, IsInvisible toggled
       -- per-row at runtime along with everything else in the row.
       layout["NanoHost_Show_RowNum "..i] = { PrettyName="NanoHost~Show "..i.."~Row Number", Style="Text", IsReadOnly=true, Position={SNO_X, ry+3}, Size={20,16} }
       layout["NanoHost_Show_FS "..i]    = { PrettyName="NanoHost~Show "..i.."~First Show Start", Style="Led", IsReadOnly=true, Color=MARKER_OFF_FS, Position={SFS_X, ry+3}, Size={SLED,SLED} }
@@ -1514,23 +1048,19 @@ function GetControlLayout(props)
       Text="FS = First Show Start        FE = First Show End        LS = Last Show Start        LE = Last Show End",
       Position={LX, y}, Size={W-20, 16}, HTextAlign="Left", FontSize=10 })
     y = y + 18
-    -- v1.3.0.30: reformatted per Steve -- the Cyan LED explanation is one
-    -- paragraph (both sentences), allowed to word-wrap within a single,
-    -- taller Label rather than being split into two explicit lines (unlike
-    -- the top instructions paragraph, where wrapping was avoided out of
-    -- caution -- here Steve explicitly asked for wrapping, expecting it's
-    -- likely needed given the combined length). Confirmed working: this
-    -- Label type wraps as expected, flawless in every field test since.
+    -- The Cyan LED explanation is one paragraph (both sentences), allowed
+    -- to word-wrap within a single, taller Label rather than being split
+    -- into two explicit lines.
     table.insert(graphics, { Type="Label",
       Text="The Cyan LED and highlighted show indicate which is the active show. The \"POS Ticket Sold\" and \"POS In Show\" Status Flags refer to this show.",
       Position={LX, y}, Size={W-20, 32}, HTextAlign="Left", FontSize=10 })
     y = y + 32
-    y = y + 8  -- blank line -- paragraph break before the Yellow LED paragraph (v1.3.0.31: halved from 16 -- Steve reported it reading as roughly double the Key-header-to-Cyan-paragraph gap, which he confirmed was the right amount)
+    y = y + 8  -- blank line -- paragraph break before the Yellow LED paragraph
     table.insert(graphics, { Type="Label",
       Text="The Yellow LED and highlighted RunTime indicate that the show is in progress and past the posted showtime.",
       Position={LX, y}, Size={W-20, 16}, HTextAlign="Left", FontSize=10 })
     y = y + 16
-    y = y + 8  -- blank line -- paragraph break before the help-file sentence (v1.3.0.31: halved from 16, same reasoning)
+    y = y + 8  -- blank line -- paragraph break before the help-file sentence
     table.insert(graphics, { Type="Label",
       Text="For additional information, please see the help file.",
       Position={LX, y}, Size={W-20, 16}, HTextAlign="Left", FontSize=10 })
@@ -1538,7 +1068,7 @@ function GetControlLayout(props)
 
     -- Day Start controls -- formatted to match the Dimmer Control page's
     -- Zone_Offset styling (fader 120 wide, offset text 40, step buttons 40,
-    -- row height 22), per Steve. Two rows: the Day Start LED sits above the
+    -- row height 22). Two rows: the Day Start LED sits above the
     -- Trigger LED, both to the left of the fader; the "Offset (minutes)"
     -- column header sits above the fader (same pattern as "Offset %" above
     -- Zone_Offset); the offset text and -/+ step buttons sit to the right of
@@ -1563,9 +1093,9 @@ function GetControlLayout(props)
     layout["NanoHost_DayStartOffset_Inc"] = { PrettyName="NanoHost~Day Start Offset Increase", Style="Button", ButtonStyle="Momentary", Legend="+", Position={LX+383, y}, Size={38, 22} }
     y = y + 32
 
-    -- Day End controls -- identical formatting to Day Start above (per
-    -- Steve): fader 120 wide, offset text 40, step buttons 40, row height
-    -- 22. Day End LED above Trigger LED, both left of the fader; "Offset
+    -- Day End controls -- identical formatting to Day Start above: fader
+    -- 120 wide, offset text 40, step buttons 40, row height 22. Day End
+    -- LED above Trigger LED, both left of the fader; "Offset
     -- (minutes)" header above the fader; offset text and -/+ step buttons
     -- to the right of the fader.
     y = y + 10
@@ -1588,9 +1118,9 @@ function GetControlLayout(props)
     layout["NanoHost_DayEndOffset_Inc"] = { PrettyName="NanoHost~Day End Offset Increase", Style="Button", ButtonStyle="Momentary", Legend="+", Position={LX+383, y}, Size={38, 22} }
     y = y + 32
 
-    -- First Show End controls -- now formatted identically to Day
-    -- Start/Day End (state LED above Trigger LED, per Steve's latest
-    -- request): row 1 has the "First Show End:" label and state LED, plus
+    -- First Show End controls -- formatted identically to Day
+    -- Start/Day End (state LED above Trigger LED): row 1 has the
+    -- "First Show End:" label and state LED, plus
     -- the "Offset (minutes)" caption above the fader; row 2 is the Trigger
     -- row with the fader and step buttons.
     y = y + 10
@@ -1638,11 +1168,6 @@ function GetControlLayout(props)
     y = y + 32
   end
 
-  -- (The Debug tab that lived here -- Last TX/RX/Error text fields -- was
-  -- removed entirely in v1.2.0.21. Everything it showed was already
-  -- duplicated to the Q-SYS Debug window via dbg()/print(), which remains
-  -- fully active; that's the actual troubleshooting tool in practice.)
-
   return layout, graphics
 end
 
@@ -1654,77 +1179,50 @@ if Controls then
 
   -- ── Configuration ──────────────────────────────────────────
   local TCP_PORT    = 13002  -- default port; overridden by Setup page TCP Port field
-  -- v1.2.0.45: no longer a user property (see GetProperties) -- fixed
-  -- internal CAI keep-alive cadence. Manual-confirmed purpose (page 89,
-  -- item 1): a CAI channel idle past 60s isn't itself dropped, but becomes
-  -- vulnerable to being bumped if a second client tries to connect while
-  -- it's idle. 45s keeps periodic traffic flowing with 15s of margin under
-  -- that 60s window -- not something an installer has any reason to tune.
+  -- Fixed internal CAI keep-alive cadence, not a user property. A CAI
+  -- channel idle past 60s isn't itself dropped, but becomes vulnerable to
+  -- being bumped if a second client tries to connect while it's idle. 45s
+  -- keeps periodic traffic flowing with 15s of margin under that window.
   local POLL_RATE   = 45
   -- Use property values; fall back to defaults if not set
   local SCRAPE_RATE = (Properties["Scrape_Interval"] and Properties["Scrape_Interval"].Value or 2)
-  -- v1.2.0.41: dimmer LIGHTPOLL's own decoupled cadence (see GetProperties
-  -- comment). lightPollEveryNTicks converts that into "every Nth routine
-  -- turn" since the plugin only reasons in turns/ticks (no wall-clock query
-  -- available), same style as meterTimer's fixed-step MTICK simulation
-  -- elsewhere in this file. Rounds to the nearest whole tick, floored at 2.
-  --
-  -- v1.2.0.44 BUG FIX: this was floored at 1, not 2. Whenever LIGHTPOLL_RATE
-  -- rounded down to exactly 1 tick (e.g. LightPoll_Interval=3 with
-  -- Scrape_Interval anywhere above 2.0 up to 6.0 -- 3/2.1=1.43, rounds to
-  -- 1), httpRequest()'s "routineTicks >= lightPollEveryNTicks" check was
-  -- satisfied on EVERY single routine tick (routineTicks increments from 0
-  -- to 1 before the check), so LIGHTPOLL won every turn and scrape NEVER
-  -- ran at all -- confirmed via a field debug log showing 168 consecutive
-  -- LIGHTPOLL requests, zero SCRAPE requests, and Status stuck on
-  -- "Initializing" forever (populated.scrape can never become true, so
-  -- checkFullyPopulated() can never succeed). Flooring at 2 guarantees
-  -- scrape at least every-other-tick no matter how close the two intervals
-  -- are -- the tightest quantization the single-connection/one-request-
-  -- per-tick design can represent while still letting scrape run at all,
-  -- consistent with scrape always being the higher-priority default action.
+  -- Converts the dimmer LIGHTPOLL's own decoupled cadence into "every Nth
+  -- routine turn," since the plugin only reasons in turns/ticks (no
+  -- wall-clock query available). Rounds to the nearest whole tick, floored
+  -- at 2: if this floor were 1 instead, a routine cadence close enough to
+  -- Scrape_Interval could round down to exactly 1 tick, and since
+  -- httpRequest()'s "routineTicks >= lightPollEveryNTicks" check would then
+  -- be satisfied on every single routine tick, LIGHTPOLL would win every
+  -- turn and scrape would never run at all (Status stuck on "Initializing"
+  -- forever, since populated.scrape can never become true). Flooring at 2
+  -- guarantees scrape at least every-other-tick no matter how close the two
+  -- intervals are.
   local LIGHTPOLL_RATE = (Properties["LightPoll_Interval"] and Properties["LightPoll_Interval"].Value or 3)
   local lightPollEveryNTicks = math.max(2, math.floor(LIGHTPOLL_RATE / SCRAPE_RATE + 0.5))
-  -- v1.3: nanoHost POS management data -- not a user property (see
-  -- GetProperties comment on Enable_NanoHost) because there's no legitimate
-  -- reason to tune this: Steve confirmed the nanoHost itself only updates
-  -- what the eCNA reports at most every 5 minutes, so anything meaningfully
-  -- faster than that just burns HTTP turns for stale data, and it's
-  -- explicitly the lowest-priority poll in this plugin. Same "every Nth
-  -- routine tick" conversion and floor-at-2 pattern as LIGHTPOLL_RATE above,
-  -- for the same reason (guards against a starvation edge case if
-  -- Scrape_Interval is ever set unusually high).
-  --
-  -- v1.3.0.32: changed from 150s (2.5 min) to 120s (2 min), per Steve.
+  -- nanoHost POS management data -- not a user property, because the
+  -- nanoHost itself only updates what the eCNA reports at most every few
+  -- minutes, so anything meaningfully faster just burns HTTP turns for
+  -- stale data; this is the lowest-priority poll in the plugin. Same "every
+  -- Nth routine tick" conversion and floor-at-2 pattern as LIGHTPOLL_RATE
+  -- above, for the same starvation-guard reason.
   local NANO_POLL_RATE = 120
   local nanoPollEveryNTicks = math.max(2, math.floor(NANO_POLL_RATE / SCRAPE_RATE + 0.5))
-  -- v1.2.0.4: periodic name auto-refresh removed entirely. Names (input,
-  -- output, and dimmer zone/channel setup) are fetched once on connect and
-  -- otherwise only via their manual Refresh buttons -- they essentially
-  -- never change after commissioning, so spending any recurring poll slot
-  -- on them was pure overhead competing with the flag scrape / light poll.
+  -- Names (input, output, and dimmer zone/channel setup) are fetched once
+  -- on connect and otherwise only via their manual Refresh buttons -- they
+  -- essentially never change after commissioning, so no periodic
+  -- auto-refresh competes with the flag scrape / light poll for a slot.
   local ENABLE_QDC   = Properties["Enable_QDC_Lighting"] and Properties["Enable_QDC_Lighting"].Value or false
   local qdcZones     = ENABLE_QDC and (Properties["QDC_Zones"]    and Properties["QDC_Zones"].Value    or 2) or 0
   local qdcChannels  = ENABLE_QDC and (Properties["QDC_Channels"] and Properties["QDC_Channels"].Value or 2) or 0
-  -- v1.3: when off, nanoHost is fully out of the poll rotation (see
-  -- httpRequest()'s priority chain below) per Steve's "remove its place on
-  -- any polling scheme we develop" instruction -- not just hidden controls.
+  -- When off, nanoHost is fully out of the poll rotation (see
+  -- httpRequest()'s priority chain below), not just hidden controls.
   local ENABLE_NANOHOST = Properties["Enable_NanoHost"] and Properties["Enable_NanoHost"].Value or false
 
-  -- v1.2.0.47 BUG FIX: Q-SYS hands back a Count=1 control as the control
-  -- itself (Controls.Foo), not a 1-element array (Controls.Foo[1] does not
-  -- exist) -- every OTHER control declared with a variable Count only ever
-  -- got exercised at Count>1 in this plugin, so this never surfaced until
-  -- Steve found that QDC_Channels=1 (always allowed, Min=1) left every
-  -- channel meter blank: every [j] index into Controls.Channel_Level etc.
-  -- was silently indexing into the control object itself rather than an
-  -- array, finding nothing there. QDC_Zones couldn't hit the same bug
-  -- before this build only because its own Min was 2 -- see the
-  -- GetProperties comment for why that's being relaxed to 1 in the same
-  -- build. Normalizing here, once, up front, means every other place in
-  -- this file that does Controls.Channel_Level[j] / Controls.Zone_Offset[i]
-  -- / etc. keeps working exactly as written, regardless of whether the
-  -- count is 1.
+  -- Q-SYS hands back a Count=1 control as the control itself (Controls.Foo),
+  -- not a 1-element array (Controls.Foo[1] does not exist). Normalizing
+  -- here, once, up front, means every other place in this file that does
+  -- Controls.Channel_Level[j] / Controls.Zone_Offset[i] / etc. keeps
+  -- working exactly as written, regardless of whether the count is 1.
   local function normalizeSingleControl(name, count)
     if count == 1 and Controls[name] then
       Controls[name] = { Controls[name] }
@@ -1741,13 +1239,12 @@ if Controls then
     normalizeSingleControl("Channel_Zone",       qdcChannels)
     normalizeSingleControl("Channel_Present",    qdcChannels)
   end
-  -- v1.2.0.48: same Count=1 gotcha, same fix -- Num_Macros allows 0-50, so
-  -- a single-macro design is just as reachable as single-zone/single-
+  -- Same Count=1 gotcha, same fix -- Num_Macros allows 0-50, so a
+  -- single-macro design is just as reachable as single-zone/single-
   -- channel. Without this, Controls.Macros at Num_Macros=1 would be the
   -- bare control rather than a 1-element array, and the
   -- "ipairs(Controls.Macros)" wiring loop below would silently iterate
-  -- zero times -- the button would be visible (once the matching
-  -- GetControlLayout key fix takes effect) but would never actually do
+  -- zero times -- the button would be visible but would never actually do
   -- anything when pressed.
   normalizeSingleControl("Macros", (Properties["Num_Macros"] and Properties["Num_Macros"].Value or 50))
 
@@ -1779,19 +1276,18 @@ if Controls then
   local connectingGen     = 0      -- bumped on every connect() call; debounces the whole disconnect-cooldown-reconnect sequence so rapid repeated calls collapse into one attempt (see connect()), and also invalidates a stale 10s failsafe timeout once a newer attempt has started
   local cooldownPending   = false  -- true from the moment a disconnect-then-reconnect cooldown is scheduled until doConnect() actually runs (whether it proceeds or stands down). Needed because between "we disconnected" and "we reconnect", isConnected and connecting are BOTH false -- without this, a second connect() call arriving in that window looks identical to "nothing in progress" and would skip the cooldown entirely.
   local intentionalDisconnect = false  -- true only for the brief window between connect()'s own deliberate sock:Disconnect() and the Closed event it causes; lets that event be correctly classified as expected teardown, not a fault
-  -- v1.2.0.32: true from the moment we've reacted to an unexpected
-  -- disconnect (Fault status set, reconnectTmr:Start(5) scheduled) until
-  -- the NEXT connect() attempt actually begins (doConnect() calling
-  -- sock:Connect()). Guards against a single failed connection attempt
-  -- generating more than one terminal Closed/Reconnect/Error notification
-  -- -- observed in the field against a genuinely unreachable IP: the raw
-  -- socket layer can report failure more than once for what is, from our
-  -- perspective, the same outstanding attempt (e.g. an initial low-level
-  -- error followed later by a formal socket-closed notification). Without
-  -- this guard, each of those redundant notifications re-logged Fault and
-  -- restarted the 5s countdown from scratch, so the actual retry kept
-  -- getting pushed further out and Status flapped Initializing/Disconnected
-  -- unpredictably instead of retrying on a clean, predictable cadence.
+  -- True from the moment we've reacted to an unexpected disconnect (Fault
+  -- status set, reconnectTmr:Start(5) scheduled) until the NEXT connect()
+  -- attempt actually begins (doConnect() calling sock:Connect()). Guards
+  -- against a single failed connection attempt generating more than one
+  -- terminal Closed/Reconnect/Error notification -- the raw socket layer
+  -- can report failure more than once for what is, from our perspective,
+  -- the same outstanding attempt (e.g. an initial low-level error followed
+  -- later by a formal socket-closed notification). Without this guard,
+  -- each of those redundant notifications would re-log Fault and restart
+  -- the 5s countdown from scratch, pushing the actual retry further out
+  -- and making Status flap Initializing/Disconnected unpredictably instead
+  -- of retrying on a clean, predictable cadence.
   local reconnectScheduled = false
 
   -- ── QDC-400 Dimmer Lighting state (v1.2) ────────────────────
@@ -1810,13 +1306,12 @@ if Controls then
   local channelZone       = {}    -- channelZone[1..qdcChannels] = 0-based rtLights.xml zone index, or -1 if unassigned
   local currentReqType    = "SCRAPE" -- "SCRAPE" | "LIGHTPOLL" | "NAME" | "LIGHTCMD" | "NANOHOST" -- routes the HTTP response to the right parser
   local currentApplyFn    = nil      -- used only when currentReqType == "NAME"
-  -- v1.2.0.41 (see httpRequest() below): replaces the old lightsPollToggle.
-  -- Scrape is now the default action on every routine turn; the dimmer
+  -- Scrape is the default action on every routine turn; the dimmer
   -- LIGHTPOLL only steals a turn once its own decoupled interval elapses,
   -- tracked as a tick count (see routineTicks/lightPollEveryNTicks near
   -- httpRequest).
 
-  -- Optimistic-UI masking (v1.2.0.2): while a user-initiated zone change is
+  -- Optimistic-UI masking: while a user-initiated zone change is
   -- in flight, the eCNA's rtLights.xml poll can still echo back the OLD
   -- level for a cycle or two (single shared HTTP connection = latency).
   -- Without masking this makes the offset slider visibly crawl/overshoot
@@ -1834,7 +1329,7 @@ if Controls then
   local presetTarget   = {} -- presetTarget[zone]   = preset state (0-4) we're waiting to see echoed back
   local presetGen      = {} -- presetGen[zone]      = generation counter; invalidates stale 15s timeouts
 
-  -- ── Local dimmer meter simulation (v1.2.0.4) ────────────────
+  -- ── Local dimmer meter simulation ────────────────
   -- The shared HTTP connection can only poll rtLights.xml every couple of
   -- seconds, which is far slower than a real dimmer fade (e.g. Mid1->Up in
   -- 2.5s per the configured level/fade-time). Rather than have the meter
@@ -1852,8 +1347,8 @@ if Controls then
   local channelAnimating   = {} -- channelAnimating[ch] = true while locally simulating (parseLights ignores live cact for this channel)
   local channelSimTarget   = {} -- channelSimTarget[ch] = level % the local simulation is ramping toward
   local channelSimRate     = {} -- channelSimRate[ch]   = %/second ramp rate (100 / configured fade seconds)
-  -- v1.2.0.41: must be declared here (before parseLights, below) rather
-  -- than alongside channelWaitZone/channelWaitKind further down -- parseLights
+  -- Must be declared here (before parseLights, below) rather than
+  -- alongside channelWaitZone/channelWaitKind further down -- parseLights
   -- references channelPendingUnmask directly, and it's defined earlier in
   -- the file than that later declaration block, so a `local` placed after
   -- it would silently resolve to a global inside parseLights instead of the
@@ -1864,7 +1359,7 @@ if Controls then
   local animatePresetChange = nil -- forward decl; defined near startChannelAnim (preset button transitions -- uses the preset's configured fade time)
   local animateOffsetChange = nil -- forward decl; defined near startChannelAnim (offset slider/text changes -- always OFFSET_FADE_SECONDS, regardless of active preset)
 
-  -- ── Dimmer-presence detection (v1.2.0.7) ────────────────────
+  -- ── Dimmer-presence detection ────────────────────
   -- Guards against the "meter ramps toward a computed target, poll shows
   -- real 0%, meter resets, ramps again, resets again" cycle when a channel
   -- has no physical dimmer connected (or it's unpowered) -- our LUT-based
@@ -1957,53 +1452,45 @@ if Controls then
   local populated = {
     rid = false, rst = false, inNames = false, outNames = false,
     dimmerSetup = false, linScan = false, scrape = false, lightPoll = false,
-    nanoHost = false,  -- v1.3.0.60: part of checkFullyPopulated's gate when Enable_NanoHost is on -- see comment there.
+    nanoHost = false,  -- part of checkFullyPopulated's gate when Enable_NanoHost is on -- see comment there.
   }
   local statusIsOK = false
 
-  -- v1.3: nanoHost free-running timer extrapolation. Per Steve, the nanoHost
-  -- only refreshes what the eCNA reports at most every 5 minutes and our own
-  -- NANOHOST poll runs even slower than that (NANO_POLL_RATE) -- too coarse
-  -- to display live-looking countdowns directly from poll data alone. So the
-  -- four fields that behave as genuine live counters (BSTim/ASTim count down/
-  -- up toward/from a show start; BETim/AETim do the same for a show end) are
+  -- nanoHost free-running timer extrapolation. The nanoHost only refreshes
+  -- what the eCNA reports at most every few minutes, and the NANOHOST poll
+  -- runs even slower than that (NANO_POLL_RATE) -- too coarse to display
+  -- live-looking countdowns directly from poll data alone. So the four
+  -- fields that behave as genuine live counters (BSTim/ASTim count down/up
+  -- toward/from a show start; BETim/AETim do the same for a show end) are
   -- extrapolated locally, once per second, between polls -- corrected back
-  -- to ground truth by each real poll. RunTim/BtwTim are NOT extrapolated --
-  -- confirmed against two live captures of the same real showtime ~8 minutes
-  -- apart that only BSTim had actually moved (119:06 vs our own 127:33
-  -- moments earlier); RunTim/BtwTim were bit-for-bit identical in both, so
-  -- those are configured/reported values, not live counters, and ticking
-  -- them locally would be fabricating movement with no evidence it's real.
+  -- to ground truth by each real poll. RunTim/BtwTim are NOT extrapolated:
+  -- they are configured/reported values, not live counters, so ticking them
+  -- locally would be fabricating movement with no evidence it's real.
   --
   -- NANO_TIME_MAX (255:59, i.e. 255*60+59=15359 seconds) is the eCNA's own
-  -- observed cap -- confirmed against real captures showing exactly this
-  -- value for "Time Between Shows"/"Time After End" when not actively
-  -- counting toward/from anything. Per Steve: "there should not be any time
-  -- greater than that" -- the up-counters (ASTim/AETim) are clamped to this
-  -- ceiling every tick so local extrapolation can never exceed what the
-  -- real device itself would ever report.
+  -- observed cap for "Time Between Shows"/"Time After End" when not
+  -- actively counting toward/from anything -- the up-counters (ASTim/AETim)
+  -- are clamped to this ceiling every tick so local extrapolation can never
+  -- exceed what the real device itself would ever report.
   --
-  -- Time of Day is NOT sourced from nanoHost/rtmandata.xml at all as of this
-  -- build -- per Steve, it's awkward for it to sit stale for up to
-  -- NANO_POLL_RATE seconds, so it's generated directly from the Q-SYS
-  -- Core's own clock (os.date), ticked every second, completely independent
-  -- of nanoHost connectivity/HostUp/nanoValid. This is a deliberate, isolated
-  -- exception to this file's otherwise-consistent no-wall-clock-dependency
-  -- convention (MTICK-style fixed-step timers elsewhere) -- justified here
-  -- because the alternative (extrapolating a parsed date+time string with no
-  -- os.* support) is far more fragile than just asking the Core what time it
-  -- is. NOT yet field-verified that os.date/os.time are actually permitted
-  -- in the Q-SYS plugin Lua sandbox -- worth confirming on real hardware.
+  -- Time of Day is not sourced from nanoHost/rtmandata.xml at all -- it's
+  -- generated directly from the Q-SYS Core's own clock (os.date), ticked
+  -- every second, completely independent of nanoHost connectivity/HostUp/
+  -- nanoValid. This is a deliberate, isolated exception to this file's
+  -- otherwise-consistent no-wall-clock-dependency convention (MTICK-style
+  -- fixed-step timers elsewhere) -- justified here because the alternative
+  -- (extrapolating a parsed date+time string with no os.* support) is far
+  -- more fragile than just asking the Core what time it is.
   --
   -- Explicit anti-faking guards for the FOUR extrapolated timers (both
-  -- required, per Steve's instruction) -- these do NOT apply to Time of Day,
-  -- which is always live/self-generated regardless of nanoHost state:
+  -- required) -- these do NOT apply to Time of Day, which is always
+  -- live/self-generated regardless of nanoHost state:
   --   1) nanoValid stays false (timers stay blanked "--:--", nothing
   --      ticks) until the FIRST real poll response has actually landed --
   --      never extrapolate from a Text control's pre-poll default.
   --   2) Whenever the last-known NanoHost_HostUp flag is false, the timers
-  --      are blanked and extrapolation stops immediately -- "any time the
-  --      Host Up is not true, the Time counters are not true either." A
+  --      are blanked and extrapolation stops immediately -- while Host Up
+  --      is not true, the Time counters are not considered true either. A
   --      later poll with HostUp true again re-seeds everything from fresh
   --      ground truth before ticking resumes.
   local nanoValid      = false  -- true once at least one real (non-UpToDate) poll has landed
@@ -2017,22 +1504,13 @@ if Controls then
 
   -- ===== Day Start =====
   -- NOTE ON PLACEMENT: earlier builds carried a comment here claiming this
-  -- code MUST be declared early in the "if Controls" block because of a
-  -- Q-SYS local-variable ceiling. That was WRONG -- disproven by a 31-file
-  -- correlation study (see the design notes). The real cause of the
-  -- "all controls disappear" failures was an APOSTROPHE in a GetControls
-  -- Description string. Placement is NOT load-bearing; this code simply
-  -- lives here because it works and there is no reason to move it.
-  --
-  -- THE RULE THAT ACTUALLY MATTERS: never put an apostrophe in any
-  -- GetControls/GetControlLayout string value (Description, PrettyName,
-  -- Legend, ...). One apostrophe in one Description silently blanks EVERY
-  -- control on EVERY page at design time -- no error, before emulation.
-  -- Write "the first show StartTime", never "the first show's StartTime".
-  -- Apostrophes in COMMENTS (like this one) are fine -- comments are
-  -- stripped at parse. Semicolons, colons, parentheses, +/- in Descriptions
-  -- are all fine and well-precedented. The three remaining planned flag
-  -- features must respect this.
+  -- Never put an apostrophe in any GetControls/GetControlLayout string
+  -- value (Description, PrettyName, Legend, ...). One apostrophe in one
+  -- Description silently blanks EVERY control on EVERY page at design
+  -- time -- no error, before emulation. Write "the first show StartTime",
+  -- never "the first show's StartTime". Apostrophes in COMMENTS (like this
+  -- one) are fine -- comments are stripped at parse. Semicolons, colons,
+  -- parentheses, +/- in Descriptions are all fine and well-precedented.
   local function parseStartTimeToEpoch(str)
     if not str or str == "" then return nil end
     local mo, da, yr, hh, mi, ss = str:match("(%d+)/(%d+)/(%d+) (%d+):(%d+):(%d+)")
@@ -2087,17 +1565,17 @@ if Controls then
   -- Mirrors Day Start's scan/evaluate pattern, gated on the LE marker
   -- (Last Show End -- the eCNA's own report of which row is currently in
   -- that state) instead of FS, and comparing against StartTime + RunTime +
-  -- offset rather than just StartTime + offset. Per Steve: true once Time
-  -- of Day reaches (LE row's StartTime + RunTime + Day End Offset); goes
-  -- false again once the eCNA itself drops the LE marker (which per Steve
-  -- happens around 255:59 after ShowTime+RunTime -- the eCNA's own
-  -- NANO_TIME_MAX ceiling -- not something this plugin times out on its
-  -- own). Epoch-based arithmetic (not a naive time-of-day string compare)
-  -- so the threshold correctly lands after midnight when StartTime +
-  -- RunTime + Offset crosses into the next calendar day -- same technique
-  -- field-confirmed for Day Start's own midnight-rollover case. Worked
-  -- example from Steve: StartTime 22:00:00, RunTime 180 (min), Offset 180
-  -- (min) -> Day End true and Trigger fires at 04:00:00 the following day.
+  -- offset rather than just StartTime + offset. True once Time of Day
+  -- reaches (LE row's StartTime + RunTime + Day End Offset); goes false
+  -- again once the eCNA itself drops the LE marker (which happens around
+  -- 255:59 after ShowTime+RunTime -- the eCNA's own NANO_TIME_MAX ceiling
+  -- -- not something this plugin times out on its own). Epoch-based
+  -- arithmetic (not a naive time-of-day string compare) so the threshold
+  -- correctly lands after midnight when StartTime + RunTime + Offset
+  -- crosses into the next calendar day -- same technique as Day Start's
+  -- own midnight-rollover case. Example: StartTime 22:00:00, RunTime 180
+  -- (min), Offset 180 (min) -> Day End true and Trigger fires at 04:00:00
+  -- the following day.
   local dayEndWasActive = false
   local function evaluateDayEnd()
     if not (Controls.NanoHost_DayEnd and Controls.NanoHost_DayEndOffset
@@ -2139,37 +1617,34 @@ if Controls then
   end
 
   -- ===== First Show End =====
-  -- Now has a state LED in addition to the Trigger (added per Steve,
-  -- matching Day Start/Day End/Last Show Start). The Trigger still fires
-  -- exactly once per first-show cycle, on whichever of two conditions
-  -- happens first:
+  -- Has a state LED in addition to the Trigger, matching Day Start/Day
+  -- End/Last Show Start. The Trigger fires exactly once per first-show
+  -- cycle, on whichever of two conditions happens first:
   --   Condition 1: the FE row (First Show End marker) is true AND Time of
   --     Day has reached that row's StartTime + RunTime + Offset.
   --   Condition 2: FE itself transitions from true to false BEFORE
-  --     Condition 1 has fired. Per Steve, FE stays true through the gap
-  --     between the first and second shows (Time Between Features), only
-  --     dropping once that gap times out -- i.e. around when the second
-  --     show starts. Condition 2 is therefore a ceiling: if Offset is long
-  --     enough that Condition 1's threshold hasn't been reached by the time
-  --     FE actually drops, fire immediately rather than let a large Offset
+  --     Condition 1 has fired. FE stays true through the gap between the
+  --     first and second shows (Time Between Features), only dropping once
+  --     that gap times out -- i.e. around when the second show starts.
+  --     Condition 2 is therefore a ceiling: if Offset is long enough that
+  --     Condition 1's threshold hasn't been reached by the time FE
+  --     actually drops, fire immediately rather than let a large Offset
   --     push the Trigger out past the second show's start.
   -- The state LED turns on with the same criteria as Condition 1, and
-  -- turns off exactly when FE goes false -- per Steve, "which should be at
-  -- the same time as when the Time Before Feature Start counts to 0" (the
-  -- next show starting). It is a LIVE recompute of Condition 1 every tick
-  -- (`active = cond1`, i.e. feActive AND the StartTime+RunTime+Offset
-  -- threshold currently reached) -- deliberately NOT gated by fseTriggered.
-  -- v1.3.0.61 originally computed this as `fseTriggered and feActive`,
-  -- which is a BUG Steve caught by testing: fseTriggered is a one-shot
-  -- latch that only clears on FE's rising edge, so once Condition 1 fired
-  -- under some earlier Offset value, the LED stayed true even after
-  -- raising the Offset to a value whose threshold hadn't been reached yet
-  -- -- it looked like the Offset wasn't being applied at all. Recomputing
-  -- live instead matches how Day Start/Day End/Last Show Start's own state
-  -- LEDs already behave (pure levels, not latches) and lets the LED
-  -- correctly flip back off if the Offset is raised past "now" after
-  -- already going true. In the Condition-2 edge case (FE's drop IS what
-  -- fires the Trigger), `cond1` requires feActive, which is already false
+  -- turns off exactly when FE goes false -- the same moment the Time
+  -- Before Feature Start counts to 0 for the next show. It is a LIVE
+  -- recompute of Condition 1 every tick (`active = cond1`, i.e. feActive
+  -- AND the StartTime+RunTime+Offset threshold currently reached) --
+  -- deliberately NOT gated by fseTriggered, which is a one-shot latch that
+  -- only clears on FE's rising edge. Gating the LED on the latch would let
+  -- it stay true after Condition 1 fired under an earlier Offset value,
+  -- even once the Offset is raised to a value whose threshold hasn't been
+  -- reached yet -- recomputing live instead matches how Day Start/Day
+  -- End/Last Show Start's own state LEDs already behave (pure levels, not
+  -- latches) and lets the LED correctly flip back off if the Offset is
+  -- raised past "now" after already going true. In the Condition-2 edge
+  -- case (FE's drop IS what fires the Trigger), `cond1` requires feActive,
+  -- which is already false
   -- at that same tick, so the LED still won't visibly light -- correct,
   -- since by then the next show has already started and there is no
   -- meaningful "on" window left to show. The Trigger still pulses once
@@ -2233,7 +1708,7 @@ if Controls then
     end
 
     -- State LED: live recompute of Condition 1, NOT gated by fseTriggered
-    -- -- see the header comment above for why (v1.3.0.61 regression).
+    -- -- see the header comment above for why.
     local active = cond1
     Controls.NanoHost_FirstShowEnd.Boolean = active
     Controls.NanoHost_FirstShowEnd.Color = active and "green" or "dimgray"
@@ -2241,11 +1716,11 @@ if Controls then
 
   -- ===== Last Show Start =====
   -- Same shape as evaluateDayStart -- level-based, not a one-shot latch:
-  -- per Steve, "it does not go false until LS goes false," so this simply
-  -- recomputes the gate+threshold every tick, exactly like Day Start/Day
-  -- End do. Gated on LS (Last Show Start marker) instead of FS, with no
-  -- extra "currently airing" check -- per Steve's stated conditions, only
-  -- LS true AND StartTime+Offset true are required.
+  -- it does not go false until LS goes false, so this simply recomputes
+  -- the gate+threshold every tick, exactly like Day Start/Day End do.
+  -- Gated on LS (Last Show Start marker) instead of FS, with no extra
+  -- "currently airing" check -- only LS true AND StartTime+Offset true
+  -- are required.
   local lastShowStartWasActive = false
   local function evaluateLastShowStart()
     if not (Controls.NanoHost_LastShowStart and Controls.NanoHost_LastShowStartOffset
@@ -2323,7 +1798,7 @@ if Controls then
     -- pattern as Zone_Offset_Inc/_Dec above (see that block's comments for
     -- why: guards against a stale scheduled callback surviving past
     -- release or a fresh re-press). Rate: 4 minutes/second while held past
-    -- the 2-second threshold, per Steve -- 2 minutes per 0.5s repeat tick.
+    -- the 2-second threshold -- 2 minutes per 0.5s repeat tick.
     local DS_HOLD_DELAY  = 2.0
     local DS_HOLD_REPEAT = 0.5
     local DS_HOLD_STEP   = 2  -- minutes per repeat tick -> 2/0.5s = 4 min/s
@@ -2635,11 +2110,11 @@ if Controls then
     statusIsOK = true
     setStatus(STATUS_OK, "OK")
   end
-  -- v1.3.0.60: per Steve, nanoHost now DOES gate Status=OK when enabled,
-  -- for consistency with the QDC precedent (dimmerSetup/linScan/lightPoll)
-  -- above -- Steve would rather wait a bit longer at "Initializing" than
-  -- have "OK" appear before everything on screen actually reflects a real
-  -- response. `populated.nanoHost` is set true on the FIRST response from
+  -- nanoHost gates Status=OK when enabled, for consistency with the QDC
+  -- precedent (dimmerSetup/linScan/lightPoll) above -- better to wait a
+  -- bit longer at "Initializing" than have "OK" appear before everything
+  -- on screen actually reflects a real response. `populated.nanoHost` is
+  -- set true on the FIRST response from
   -- the eCNA's nanoHost endpoint of any kind -- <UpToDate/>, HostUp=false,
   -- or a full dataset -- exactly parallel to how the QDC flags only
   -- require a response having landed, not that hardware is necessarily
@@ -2654,26 +2129,22 @@ if Controls then
   -- `parseNanoHost` below so Status actually flips the moment that first
   -- response lands.
 
-  -- v1.2.0.32: split in two. CAI (RID/RST) and HTTP (names, dimmer setup,
-  -- LIN scan, scrape, light poll) are independent channels/sockets --
-  -- a hiccup on one doesn't mean the other's already-fresh data is now
-  -- suspect. Previously a single resetPopulationTracking() wiped BOTH on
-  -- every connect() call, including the CAI side's own automatic retries.
-  -- Field-observed consequence: an eCNA still finishing its own boot
-  -- rejects the first couple of CAI sessions with "Resource Unavailable"
-  -- while its HTTP interface is already up and successfully answering --
-  -- each rejected CAI attempt was discarding HTTP-side progress that had
-  -- JUST succeeded moments earlier, forcing the full Setup.xml/rtLin.xml
-  -- sequence to restart from scratch over the single shared HTTP
-  -- connection every time, repeatedly, and pushing "OK" out by tens of
-  -- seconds even though the unit had clearly been responding the whole
-  -- time. Now a CAI-only reconnect (button, IP unchanged, automatic retry)
-  -- only re-earns the CAI side; HTTP-side freshness only resets on an
-  -- actual target change (resetForNewTarget, i.e. IP_ADDRESS changed --
-  -- see below), since that's the only event that actually invalidates
-  -- previously-fetched HTTP data. "OK" still requires every source fresh
-  -- from ITS OWN channel's most recent (re)connection -- this only changes
-  -- which events count as invalidating which half.
+  -- CAI (RID/RST) and HTTP (names, dimmer setup, LIN scan, scrape, light
+  -- poll) are independent channels/sockets, tracked separately -- a hiccup
+  -- on one doesn't mean the other's already-fresh data is now suspect. An
+  -- eCNA still finishing its own boot can reject the first couple of CAI
+  -- sessions with "Resource Unavailable" while its HTTP interface is
+  -- already up and successfully answering; wiping HTTP-side progress on
+  -- every CAI retry would force the full Setup.xml/rtLin.xml sequence to
+  -- restart from scratch each time, pushing "OK" out by tens of seconds
+  -- even though the unit had been responding the whole time. So a CAI-only
+  -- reconnect (button, IP unchanged, automatic retry) only re-earns the
+  -- CAI side; HTTP-side freshness only resets on an actual target change
+  -- (resetForNewTarget, i.e. IP_ADDRESS changed -- see below), since
+  -- that's the only event that actually invalidates previously-fetched
+  -- HTTP data. "OK" still requires every source fresh from ITS OWN
+  -- channel's most recent (re)connection -- this only changes which
+  -- events count as invalidating which half.
   local function resetCaiPopulationTracking()
     populated.rid = false; populated.rst = false
     statusIsOK = false
@@ -2692,8 +2163,8 @@ if Controls then
     resetHttpPopulationTracking()
   end
 
-  -- v1.2.0.42/43 (Steve's design): three-tier trust model for the 4 Digital
-  -- Projector buttons (Dig1_Power/Dig1_Video/Dig2_Power/Dig2_Video).
+  -- Three-tier trust model for the 4 Digital Projector buttons
+  -- (Dig1_Power/Dig1_Video/Dig2_Power/Dig2_Video).
   -- DP1ON/DP1OFF/DV1ON/DV1OFF/DP2ON/DP2OFF/DV2ON/DV2OFF are the only output
   -- changes with a dedicated unsolicited RPT,EVT code (confirmed against
   -- the manual's full event list -- Slide/Aux Projector has none, so it
@@ -2709,9 +2180,9 @@ if Controls then
   --   buttons directly -- see parseStatusRecord below -- confirming/
   --   correcting Tier 1's guess almost immediately.
   --
-  --   Tier 3 (second backstop): per Steve, "I would tend to let Scrape
-  --   'fix' a DV status if we get two consecutive scrapes that differ from
-  --   what our state is showing." dpMismatch[1..4] tracks a per-button
+  --   Tier 3 (second backstop): scrape is allowed to "fix" a DV status
+  --   once two consecutive scrapes differ from what our state is showing.
+  --   dpMismatch[1..4] tracks a per-button
   --   streak of consecutive scrapes that disagree with the current value;
   --   a single differing scrape is treated as a possible stale/
   --   transitional read and ignored, but two in a row overrides (see
@@ -2737,7 +2208,7 @@ if Controls then
     Controls.Control_State.String    = f[6]  or ""
     Controls.Stopped_State.String    = f[7]  or ""
     Controls.Cue_Number.String       = f[8]  or ""
-    -- v1.2.0.42: RST's own Digital Projector Power/Video OUTPUT STATUS
+    -- RST's own Digital Projector Power/Video OUTPUT STATUS
     -- fields (codes 6/8/10/12 of the status record -- the "actual" state,
     -- not the "desired" control-flag field right before each) -- comma
     -- positions f[10]/f[12]/f[14]/f[16]. Guarded on record length since
@@ -2767,7 +2238,7 @@ if Controls then
 
   -- ── RID Response Parser ─────────────────────────────────────
   -- Parses the RSP,RID response containing model, firmware version, and
-  -- (v1.3.0.22) Screen Id. Manual confirms all three are the record's three
+  -- Screen Id. Manual confirms all three are the record's three
   -- codes in this exact order (code1=Device Name, code2=Software Version,
   -- code3=Screen Id) -- e.g. "RSP,RID,0,0,eCNA-10,1007,27,1630" has Screen
   -- Id "27" as field 7. The existing `#fields < 7` guard already ensures
@@ -2788,10 +2259,9 @@ if Controls then
   -- Handles RPT,EVT messages sent by the eCNA without being polled
   -- Re-polls RST on state-changing events for immediate UI update
   --
-  -- v1.2.0.43 (Steve's design): for the 4 Digital Projector buttons, trust
-  -- the unsolicited event itself at face value the instant it arrives --
-  -- "I would think we should take an unsolicited response at face value."
-  -- This is as fast as it gets: no round trip at all, since the event is
+  -- For the 4 Digital Projector buttons, trust the unsolicited event
+  -- itself at face value the instant it arrives. This is as fast as it
+  -- gets: no round trip at all, since the event is
   -- the eCNA telling us what already happened. The reactive RST re-poll
   -- below still fires exactly as before and is now the FIRST backstop
   -- (confirms/corrects within ~0.2-0.4s if the event turns out to have been
@@ -2845,14 +2315,12 @@ if Controls then
     if evt == TcpSocket.Events.Connected then
       isConnected = true
       connecting  = false
-      -- v1.2.0.33: the raw TCP handshake succeeding doesn't mean we have
-      -- real, current data yet (RID/RST/names/etc. below still have to
-      -- arrive) -- but it IS genuine progress, and worth showing as such.
-      -- Previously Status could sit on a stale Fault message (e.g. "Connect
-      -- timed out" from several failed automatic retries) right up until
-      -- checkFullyPopulated() flipped it directly to "OK" -- looking like
-      -- the plugin had been stuck the whole time it was actually already
-      -- talking to the unit and pulling in real data. Guarded by
+      -- The raw TCP handshake succeeding doesn't mean we have real, current
+      -- data yet (RID/RST/names/etc. below still have to arrive) -- but it
+      -- IS genuine progress, and worth showing as such, rather than
+      -- leaving Status sitting on a stale Fault message (e.g. "Connect
+      -- timed out" from an earlier failed retry) right up until
+      -- checkFullyPopulated() flips it directly to "OK". Guarded by
       -- `not statusIsOK` so a redundant/spurious Connected notification
       -- while already fully populated can't regress the display backwards.
       -- If we lose the connection again before reaching OK, the normal
@@ -2873,9 +2341,9 @@ if Controls then
           table.insert(nameQueue, {"/Setup.xml?PgIdx=13", applyDimmerSetup})  -- QDC zone names + channel assignments
           table.insert(nameQueue, {"/rtLin.xml", applyLinNetwork})  -- confirm QDC-400 board(s) actually present on the LIN network
         end
-        -- v1.3: per Steve, get the nanoHost's initial conditions in the same
-        -- bootstrap burst as everything else while "Initializing", rather
-        -- than waiting for the first slow NANOHOST poll tier turn (up to
+        -- Get the nanoHost's initial conditions in the same bootstrap
+        -- burst as everything else while "Initializing", rather than
+        -- waiting for the first slow NANOHOST poll tier turn (up to
         -- NANO_POLL_RATE seconds later). This is a ONE-TIME priority fetch --
         -- routine refresh after this still runs on its own much slower
         -- cadence via httpRequest()'s NANOHOST tier, unaffected by this.
@@ -2915,14 +2383,14 @@ if Controls then
         intentionalDisconnect = false
         dbg("Disconnected as part of our own reconnect -- not a fault")
       elseif reconnectScheduled then
-        -- v1.2.0.32: we already reacted to a failure for this outstanding
-        -- attempt (Fault logged, 5s retry already ticking) -- this is a
-        -- redundant terminal notification for that SAME failure, not a
-        -- fresh disconnect. Ignore it: re-logging Fault and restarting
+        -- We already reacted to a failure for this outstanding attempt
+        -- (Fault logged, 5s retry already ticking) -- this is a redundant
+        -- terminal notification for that SAME failure, not a fresh
+        -- disconnect. Ignore it: re-logging Fault and restarting
         -- reconnectTmr here would just push the actual retry further out
-        -- every time one of these arrives, which is exactly the
-        -- Initializing/Disconnected/Disconnected flapping seen in the
-        -- field against a genuinely unreachable IP.
+        -- every time one of these arrives, causing
+        -- Initializing/Disconnected/Disconnected flapping against a
+        -- genuinely unreachable IP.
         dbg("Redundant disconnect notification while a retry is already pending -- ignored")
       else
         reconnectScheduled = true
@@ -2945,32 +2413,28 @@ if Controls then
   -- ── Connect function ────────────────────────────────────────
   -- Initiates CAI TCP connection using current IP/port settings.
   --
-  -- v1.2.0.26: clearing the old `connecting` guard the instant the raw TCP
-  -- handshake completed (in the Connected handler) turned out to be too
-  -- narrow a window. Field testing showed two Reconnect presses ~90ms
-  -- apart: the first's TCP connect succeeded and immediately cleared the
-  -- guard, so the second press wasn't blocked -- it disconnected the
-  -- barely-established first connection and reconnected again, which the
-  -- eCNA rejected with "Resource Unavailable" because it hadn't yet fully
-  -- released the just-closed session. A generation counter debounces the
-  -- entire sequence instead: every connect() call bumps it, a fresh
-  -- attempt only actually fires after a short cooldown, and if a NEWER
-  -- connect() call arrives during that cooldown, the older one silently
-  -- stands down rather than racing it. Repeated rapid presses collapse
-  -- into a single attempt, timed from the last press.
-  -- v1.2.0.32: `isAutoRetry` distinguishes the automatic 5s-after-Fault
-  -- retry (called only from reconnectTmr.EventHandler) from every other
-  -- caller (initial startup, manual Reconnect button, IP change) -- all of
-  -- which pass nothing, i.e. isAutoRetry=false. Previously every single
-  -- call unconditionally flashed Status to "Initializing", including the
-  -- 2nd/3rd/50th automatic retry against a target that's been Faulted the
-  -- whole time -- misleadingly implying fresh progress on every cycle
-  -- rather than "still failing, still retrying." An automatic retry now
-  -- leaves Status showing whatever Fault/Missing state it already had
-  -- (still fully updated the instant something actually responds, via the
-  -- normal Connected/RST-populated path) -- "Initializing" is reserved for
-  -- attempts the operator actually initiated or that are happening for the
-  -- first time.
+  -- Clearing the old `connecting` guard the instant the raw TCP handshake
+  -- completes (in the Connected handler) is too narrow a window: two
+  -- Reconnect presses close together can otherwise race, with the second
+  -- disconnecting the barely-established first connection and
+  -- reconnecting again, which the eCNA rejects with "Resource Unavailable"
+  -- because it hasn't yet fully released the just-closed session. A
+  -- generation counter debounces the entire sequence instead: every
+  -- connect() call bumps it, a fresh attempt only actually fires after a
+  -- short cooldown, and if a NEWER connect() call arrives during that
+  -- cooldown, the older one silently stands down rather than racing it.
+  -- Repeated rapid presses collapse into a single attempt, timed from the
+  -- last press.
+  -- `isAutoRetry` distinguishes the automatic 5s-after-Fault retry (called
+  -- only from reconnectTmr.EventHandler) from every other caller (initial
+  -- startup, manual Reconnect button, IP change) -- all of which pass
+  -- nothing, i.e. isAutoRetry=false. An automatic retry leaves Status
+  -- showing whatever Fault/Missing state it already had (still fully
+  -- updated the instant something actually responds, via the normal
+  -- Connected/RST-populated path) rather than flashing back to
+  -- "Initializing" on every cycle against a target that's been Faulted the
+  -- whole time -- "Initializing" is reserved for attempts the operator
+  -- actually initiated or that are happening for the first time.
   local function connect(isAutoRetry)
     local ip   = Controls.IP_ADDRESS.String
     local port = tonumber(Controls.TCP_PORT.String)
@@ -2982,7 +2446,7 @@ if Controls then
 
     connectingGen = connectingGen + 1
     local myGen = connectingGen
-    -- v1.2.0.32: CAI-side only -- see resetCaiPopulationTracking's comment.
+    -- CAI-side only -- see resetCaiPopulationTracking's comment.
     -- A CAI reconnect (this function) doesn't invalidate already-fresh
     -- HTTP-side data; only resetForNewTarget() (an actual IP change) does.
     resetCaiPopulationTracking()
@@ -3001,16 +2465,13 @@ if Controls then
       reconnectScheduled = false  -- a fresh attempt is actually starting now -- the NEXT terminal event (whichever it is) is new information, not a redundant echo of the last failure
       Timer.CallAfter(function()
         if connecting and connectingGen == myGen then
-          -- v1.2.0.32: this used to only clear `connecting` -- which
-          -- prevented the flag from wrongly blocking some FUTURE connect()
-          -- call, but didn't itself do anything to actually retry. If the
-          -- raw socket layer never delivers a terminal Closed/Error event
-          -- at all for an unreachable address (the exact case this
-          -- failsafe exists for), nothing was left to un-stick the plugin
-          -- -- it would sit at "Initializing" indefinitely. Now treat a
-          -- 10s non-resolution the same as an unexpected disconnect: flag
-          -- Fault and schedule the normal 5s automatic retry, same path a
-          -- real Closed/Error event would take. Guarded by
+          -- If the raw socket layer never delivers a terminal Closed/Error
+          -- event at all for an unreachable address, nothing would
+          -- otherwise un-stick the plugin -- it would sit at
+          -- "Initializing" indefinitely. Treat a 10s non-resolution the
+          -- same as an unexpected disconnect: flag Fault and schedule the
+          -- normal 5s automatic retry, same path a real Closed/Error event
+          -- would take. Guarded by
           -- `reconnectScheduled` like that path too, in case the real
           -- terminal event arrives at nearly the same moment.
           dbg("Connect attempt did not resolve within 10s, treating as failed")
@@ -3044,10 +2505,10 @@ if Controls then
   -- as before) so the automatic retry gets the same re-entrancy guard,
   -- population-tracking reset, and status handling as every other
   -- reconnect path -- there's only one place connection attempts start now.
-  -- v1.2.0.32: passes isAutoRetry=true so Status keeps showing Fault/Missing
-  -- through repeated automatic retries instead of flashing back to
-  -- "Initializing" every 5 seconds against a target that's been unreachable
-  -- the whole time.
+  -- Passes isAutoRetry=true so Status keeps showing Fault/Missing through
+  -- repeated automatic retries instead of flashing back to "Initializing"
+  -- every 5 seconds against a target that's been unreachable the whole
+  -- time.
   reconnectTmr.EventHandler = function()
     reconnectTmr:Stop()
     connect(true)
@@ -3074,8 +2535,7 @@ if Controls then
   Controls.Reconnect.EventHandler = function() connect() end
 
   -- Single consolidated refresh: re-fetches everything that's normally
-  -- only fetched once at connect (v1.2.0.11 -- previously 4 separate
-  -- buttons across 3 pages). Queued in order at the FRONT of nameQueue so
+  -- only fetched once at connect. Queued in order at the FRONT of nameQueue so
   -- it executes on the next few HTTP cycles ahead of routine traffic.
   Controls.Refresh_Setup.EventHandler = function()
     local items = {
@@ -3219,7 +2679,7 @@ if Controls then
         if ctl then
           ctl.EventHandler = function()
             for k = 1, 5 do Controls.Zone_Preset[base+k].Boolean = (k == b) end
-            -- v1.2.0.41: capture whatever offset was actually showing right
+            -- Capture whatever offset was actually showing right
             -- before beginPresetPending resets it to 0, so the one-extra-
             -- poll-cycle settling guard knows this transition "started"
             -- with a non-zero offset even though the target itself (offset
@@ -3227,16 +2687,16 @@ if Controls then
             local priorOffset = Controls.Zone_Offset[i] and Controls.Zone_Offset[i].Value or 0
             beginPresetPending(i, ZonePresetState[b])  -- mask until eCNA confirms (or 15s), avoids visible flicker/reversion
             zoneCurrentPreset[i] = ZonePresetState[b]  -- remembered so a later offset-only change knows which preset level to combine with
-            -- v1.2.0.41 fix: a preset selection ALSO resets the zone's
-            -- offset to 0 (manual sec 5.9, mirrored above via
-            -- beginPresetPending -> beginOffsetPending(i, 0)) -- but until
-            -- now, zoneLastOffset[i] (the unified detection block's own
-            -- "last known offset" bookkeeping) was never updated here, only
-            -- zoneCurrentPreset was. zoneLastOffset only gets refreshed
-            -- inside that detection block itself, which stays fully gated
-            -- off while offsetPending is true -- so it remained stale at
-            -- whatever offset was active BEFORE this button press. The
-            -- very poll that finally confirms our command (clearing both
+            -- A preset selection ALSO resets the zone's offset to 0
+            -- (manual sec 5.9, mirrored above via beginPresetPending ->
+            -- beginOffsetPending(i, 0)). zoneLastOffset[i] (the unified
+            -- detection block's own "last known offset" bookkeeping) must
+            -- be updated here too, alongside zoneCurrentPreset --
+            -- otherwise it stays stale at whatever offset was active
+            -- BEFORE this button press, since it's only refreshed inside
+            -- the detection block itself, which stays fully gated off
+            -- while offsetPending is true. The very poll that finally
+            -- confirms our command (clearing both
             -- presetPending and offsetPending) runs that detection block
             -- immediately afterward, in the SAME call -- sees the stale
             -- prevOff no longer matches the real (now zero) offset, and
@@ -3278,7 +2738,7 @@ if Controls then
           local v = math.floor(ctl.Value + 0.5)
           if Controls.Zone_Offset_Text[i] then Controls.Zone_Offset_Text[i].String = tostring(v) end
           beginOffsetPending(i, v)  -- masks immediately; re-armed (target + 15s failsafe) on every tick
-          -- v1.2.0.41: keep zoneLastOffset in step with our own optimistic
+          -- Keep zoneLastOffset in step with our own optimistic
           -- change, same reasoning as the preset button handler above --
           -- otherwise the unified detection block, once offsetPending
           -- finally clears, would compare the real (now-matching) offset
@@ -3311,7 +2771,7 @@ if Controls then
             Controls.Zone_Offset[i].Value = v
             ctl.String = tostring(v)
             beginOffsetPending(i, v)  -- mask until eCNA echoes back this exact value (or 15s)
-            zoneLastOffset[i] = v  -- v1.2.0.41: see the fader handler above -- avoids a stale-comparison false re-trigger once offsetPending clears
+            zoneLastOffset[i] = v  -- see the fader handler above -- avoids a stale-comparison false re-trigger once offsetPending clears
             animateOffsetChange(i, v, false)  -- self-initiated, no detection-lag compensation needed
             queueLightCmd(i-1, 5, v, 3)
           else
@@ -3322,7 +2782,7 @@ if Controls then
     end
   end
 
-  -- ── Offset step buttons (v1.2.0.41; debounced v1.2.0.46) ────────
+  -- ── Offset step buttons ──────────────────────────────
   -- Momentary Increase/Decrease buttons beside the Offset readout: a quick
   -- press/release nudges the offset by 1; holding past HOLD_DELAY begins
   -- repeating at 1 unit per HOLD_REPEAT seconds until released. Reuses the
@@ -3340,15 +2800,15 @@ if Controls then
     local function stepOffset(i, delta)
       local ctl = Controls.Zone_Offset[i]
       if not ctl then return end
-      -- v1.2.0.41 fix: Zone_Offset (a Knob/Fader control) stores Value as a
-      -- Lua float even when it's showing a whole number -- the fader itself
-      -- can be dragged to fractional positions, though nothing else in
-      -- this plugin ever intentionally sets a fractional offset. Reading
-      -- it raw and adding an integer delta (float + integer = float, per
-      -- Lua 5.3's arithmetic subtype rules) kept the result a float too, so
-      -- tostring(v) printed "6.0" instead of "6" -- until the next live
-      -- poll's tonumber(zofs[i]) (a plain integer string, no decimal point)
-      -- overwrote it with a genuine Lua integer and "corrected" the
+      -- Zone_Offset (a Knob/Fader control) stores Value as a Lua float even
+      -- when it's showing a whole number -- the fader itself can be
+      -- dragged to fractional positions, though nothing else in this
+      -- plugin ever intentionally sets a fractional offset. Reading it raw
+      -- and adding an integer delta (float + integer = float, per Lua
+      -- 5.3's arithmetic subtype rules) would keep the result a float too,
+      -- so tostring(v) would print "6.0" instead of "6" until the next
+      -- live poll's tonumber(zofs[i]) (a plain integer string, no decimal
+      -- point) overwrote it with a genuine Lua integer and "corrected" the
       -- display. Rounding here forces the integer subtype up front, same
       -- as the fader/text handlers already do via math.floor(x + 0.5), so
       -- every write to Zone_Offset_Text from a self-initiated change is a
@@ -3360,21 +2820,18 @@ if Controls then
       ctl.Value = v
       if Controls.Zone_Offset_Text[i] then Controls.Zone_Offset_Text[i].String = tostring(v) end
       beginOffsetPending(i, v)   -- masks immediately; re-armed on every step, same as the fader drag
-      zoneLastOffset[i] = v      -- keep the unified-detection baseline in sync (v1.2.0.41 fix)
+      zoneLastOffset[i] = v      -- keep the unified-detection baseline in sync
       animateOffsetChange(i, v, false)  -- self-initiated, no detection-lag compensation
-      -- v1.2.0.46 fix: this used to call queueLightCmd() immediately on
-      -- every step, on the theory that each tap is "a deliberate discrete
-      -- action, not a continuous drag needing debounce." Field testing
-      -- showed otherwise: a fast burst of taps (or the HOLD_REPEAT
-      -- auto-repeat, one step per 0.5s) can generate commands faster than
-      -- httpRequest() drains them -- LIGHTCMD is serviced at most once per
-      -- HTTP round trip, roughly once per Scrape_Interval -- and
-      -- queueLightCmd's 4-deep cap (mirroring the eCNA's own command
-      -- buffer) silently drops anything past it, with no guarantee the
-      -- LAST tapped value is among the survivors. Net effect: rapidly
-      -- tapping to +10% could leave the real device short (e.g. 8%) while
-      -- our own local prediction still showed 10%, only correcting once a
-      -- later scrape caught the mismatch. Now debounced exactly like the
+      -- Debounced rather than sending on every tap: a fast burst of taps
+      -- (or the HOLD_REPEAT auto-repeat, one step per 0.5s) can generate
+      -- commands faster than httpRequest() drains them -- LIGHTCMD is
+      -- serviced at most once per HTTP round trip, roughly once per
+      -- Scrape_Interval -- and queueLightCmd's 4-deep cap (mirroring the
+      -- eCNA's own command buffer) silently drops anything past it, with
+      -- no guarantee the LAST tapped value is among the survivors. That
+      -- would leave the real device short of the intended value while our
+      -- own local prediction shows the full amount, only correcting once
+      -- a later scrape catches the mismatch. Debounced exactly like the
       -- fader drag handler above, sharing its same offsetDebounceGen[i]
       -- counter (both ultimately commit the same zone offset, so unifying
       -- the debounce is correct regardless of which control last moved) --
@@ -3395,7 +2852,7 @@ if Controls then
       offsetStepGen[i][dir] = (offsetStepGen[i][dir] or 0) + 1
       local myGen = offsetStepGen[i][dir]
       offsetStepTimer[i] = offsetStepTimer[i] or {}
-      -- v1.2.0.41: always a FRESH Timer here, never reused across separate
+      -- Always a FRESH Timer here, never reused across separate
       -- press cycles. A stale scheduled fire from an earlier press (one
       -- Timer:Stop() didn't manage to cancel before it fired -- can't
       -- assume otherwise across every possible runtime) would otherwise
@@ -3447,7 +2904,7 @@ if Controls then
   end
 
   -- (Refresh_Dimmer_Setup and Refresh_LIN_Network consolidated into the
-  -- single Refresh_Setup handler above -- v1.2.0.11.)
+  -- single Refresh_Setup handler above.)
 
   -- ── User-defined name tables ────────────────────────────────
   -- Fetched from eCNA on connect; fall back to default names if empty
@@ -3616,10 +3073,10 @@ if Controls then
     checkFullyPopulated()
   end
 
-  -- (v1.2.0.4: names -- input, output, and dimmer setup -- are fetched once
-  -- on connect and otherwise only via their manual Refresh buttons; no
+  -- Names -- input, output, and dimmer setup -- are fetched once on
+  -- connect and otherwise only via their manual Refresh buttons; no
   -- periodic re-fetch. See the Connected handler above and the three
-  -- Refresh_*_Names button handlers below.)
+  -- Refresh_*_Names button handlers below.
 
   -- ── Web Scrape via raw TCP HTTP/1.0 ─────────────────────────
   -- scrapeTimer is the sole reconnect driver (fires every SCRAPE_RATE seconds).
@@ -3630,10 +3087,10 @@ if Controls then
   local httpBuf       = ""
   local httpConnected = false
   local scrapeTimer   = Timer.New()
-  -- v1.3.0.64: generation counter for the HTTP connect failsafe below --
-  -- bumped on every httpSock:Connect() attempt so a stale 10s timeout from a
-  -- superseded attempt can't wrongly act on a newer one. Mirrors connectingGen
-  -- on the CAI socket.
+  -- Generation counter for the HTTP connect failsafe below -- bumped on
+  -- every httpSock:Connect() attempt so a stale 10s timeout from a
+  -- superseded attempt can't wrongly act on a newer one. Mirrors
+  -- connectingGen on the CAI socket.
   local httpConnectingGen = 0
 
   -- Send HTTP GET, tagging currentReqType so the Closed handler knows
@@ -3650,37 +3107,21 @@ if Controls then
     dbg("HTTP GET " .. path)
   end
 
-  -- v1.2.0.41: scrape (/rtIoFDetail.xml) is the plugin's core purpose --
-  -- it's how preset changes and every other CAI-flag-driven indicator
-  -- (Inputs/Outputs pages, House/Stage fast-path) get detected, same as the
+  -- Scrape (/rtIoFDetail.xml) is the plugin's core purpose -- it's how
+  -- preset changes and every other CAI-flag-driven indicator (Inputs/
+  -- Outputs pages, House/Stage fast-path) get detected, same as the
   -- original script this plugin replaced.
   --
-  -- This build decouples the dimmer LIGHTPOLL from Scrape_Interval, after
-  -- two rounds of field experimentation (build 40 stayed untouched
-  -- throughout). The first attempt made scrape strictly alternate 1:1 with
-  -- an "other" turn (light commands/name fetches/dimmer poll) -- but field
-  -- logs (Scrape_Interval=1s) showed that barely moved real scrape cadence
-  -- versus the unmodified build, because scrapeTimer restarts fresh after
-  -- EVERY request regardless of type: real scrape-to-scrape gap was always
-  -- ~2x(Scrape_Interval + round-trip) whenever the dimmer LIGHTPOLL was
-  -- enabled, since it was consuming every other turn either way. Lowering
-  -- Scrape_Interval sped up scrape AND lightpoll together, never scrape
-  -- alone.
-  --
-  -- This version decouples them properly: LIGHTPOLL now runs on its OWN
-  -- slower cadence (LightPoll_Interval, tracked in routine "ticks" via
-  -- lightPollEveryNTicks -- see GetProperties/config comments) instead of
-  -- automatically claiming every other turn. Scrape is the DEFAULT action
-  -- every tick that nothing higher-priority claims, so Scrape_Interval now
-  -- controls real scrape cadence directly, exactly as Steve asked ("let
-  -- scrape have a real (or more real) setting"). Confirmed via field debug
-  -- logs: at Scrape_Interval=1/LightPoll_Interval=4, ticks land in a clean
-  -- SCRAPE,SCRAPE,SCRAPE,LIGHTPOLL repeating pattern (2/3 of scrape-to-
-  -- scrape gaps ~1.2-1.4s, the other 1/3 ~2.5-2.7s where a lightpoll sits in
-  -- between) -- a real improvement over the prior scheme's constant
-  -- ~2.5-2.7s. Steve found LightPoll_Interval=3 (vs. the default
-  -- Scrape_Interval of 2) a further, noticeable improvement, particularly
-  -- for offset-change responsiveness -- see GetProperties comment.
+  -- The dimmer LIGHTPOLL runs on its OWN slower cadence (LightPoll_Interval,
+  -- tracked in routine "ticks" via lightPollEveryNTicks -- see
+  -- GetProperties/config comments) rather than automatically claiming
+  -- every other turn -- if LIGHTPOLL claimed every other turn, its cadence
+  -- would stay coupled to Scrape_Interval (since scrapeTimer restarts
+  -- fresh after every request regardless of type), so lowering
+  -- Scrape_Interval would speed up scrape AND lightpoll together, never
+  -- scrape alone. Decoupling them means Scrape_Interval directly controls
+  -- real scrape cadence, and LightPoll_Interval independently controls how
+  -- often the dimmer poll takes a turn.
   --
   -- Priority order per tick:
   --   1) lightCmdQueue (button/offset manual commands) -- immediate, always
@@ -3691,7 +3132,7 @@ if Controls then
   --      still manual control, still immediate -- no longer has to wait for
   --      an "other" turn at all, which is a small additional improvement
   --   4) dimmer LIGHTPOLL, only once its own slower interval has elapsed
-  --   5) nanoHost NANOHOST poll (v1.3), only once its own MUCH slower
+  --   5) nanoHost NANOHOST poll, only once its own MUCH slower
   --      interval has elapsed -- checked here, still ahead of the SCRAPE
   --      default, because SCRAPE has no "due" gating of its own (it's
   --      unconditional once reached) -- if NANOHOST were checked after it,
@@ -3701,7 +3142,7 @@ if Controls then
   --      isn't reset, so it gets picked up the very next tick instead.
   --   6) SCRAPE -- the default, every tick nothing above claimed
   local routineTicks = 0  -- counts turns since the last LIGHTPOLL; reset on send or on a fresh target
-  local nanoTicks    = 0  -- v1.3: counts turns since the last NANOHOST poll; reset on send or on a fresh target
+  local nanoTicks    = 0  -- counts turns since the last NANOHOST poll; reset on send or on a fresh target
   local function httpRequest()
     local ip = Controls.IP_ADDRESS.String
     if not isValidIP(ip) then
@@ -3710,17 +3151,16 @@ if Controls then
     end
     scrapeTimer:Stop()  -- pause timer; restarted in Closed handler
     if not httpConnected then
-      -- v1.3.0.64 BUG FIX: the CAI socket has always had a 10s failsafe for
-      -- exactly this situation (see connect()/doConnect() above) -- if the
-      -- target never responds at the network level at all (eCNA not yet
-      -- powered on), the underlying TCP connect can hang far longer than a
-      -- target that's up and actively refusing, and no terminal Closed/Error
-      -- event arrives to let us retry. The HTTP socket never had the same
-      -- protection: scrapeTimer is stopped the instant a connect attempt
-      -- starts (above) and only restarts in the Closed handler, so a single
-      -- hung attempt against a not-yet-booted eCNA could block Inputs/
-      -- Outputs/QDC/nanoHost data (and therefore Status=OK) for well over a
-      -- minute after the eCNA actually came up, since nothing was retrying.
+      -- Mirrors the CAI socket's own 10s connect failsafe (see
+      -- connect()/doConnect() above): if the target never responds at the
+      -- network level at all (eCNA not yet powered on), the underlying
+      -- TCP connect can hang far longer than a target that's up and
+      -- actively refusing, and no terminal Closed/Error event arrives to
+      -- let us retry. scrapeTimer is stopped the instant a connect attempt
+      -- starts (above) and only restarts in the Closed handler, so without
+      -- this failsafe a single hung attempt against a not-yet-booted eCNA
+      -- could block Inputs/Outputs/QDC/nanoHost data (and therefore
+      -- Status=OK) for well over a minute after the eCNA actually came up.
       -- Force it to give up and retry after 10s, same as the CAI side.
       httpConnectingGen = httpConnectingGen + 1
       local myHttpGen = httpConnectingGen
@@ -3745,10 +3185,9 @@ if Controls then
 
     -- The one-time initial population (input/output names, dimmer setup,
     -- LIN scan -- queued in nameQueue right after Connected) keeps its
-    -- original top priority, ahead of scrape. Per Steve: "The initial
-    -- interaction to retrieve all of the information can take priority over
-    -- the scrape function. It is presumed that until we're done
-    -- initializing, nothing is correct yet." statusIsOK is false during
+    -- top priority, ahead of scrape: until initialization is done, nothing
+    -- on screen is trustworthy yet, so retrieving that information takes
+    -- priority over the scrape function. statusIsOK is false during
     -- this window (and again briefly after a target change re-triggers
     -- population), so this only engages during genuine (re)initialization.
     if #nameQueue > 0 and not statusIsOK then
@@ -3775,8 +3214,8 @@ if Controls then
     -- Dimmer LIGHTPOLL: decoupled from scrape -- only takes a turn once its
     -- OWN slower interval has elapsed, instead of automatically claiming
     -- every other tick. Meter animation between real polls already masks
-    -- the slower refresh (per Steve: "we're already 'faking' the dimmer
-    -- meters with our animation").
+    -- the slower refresh, since the meters are already being "faked" via
+    -- animation rather than reading live from every poll.
     if ENABLE_QDC and routineTicks >= lightPollEveryNTicks then
       routineTicks = 0
       currentReqType = "LIGHTPOLL"
@@ -3784,11 +3223,11 @@ if Controls then
       return
     end
 
-    -- v1.3: nanoHost NANOHOST poll -- lowest priority, own much-slower
-    -- cadence (NANO_POLL_RATE, ~2.5 min). Only takes a turn when enabled AND
-    -- due; per Steve, this data updates no faster than every 5 minutes at
-    -- the source, so polling it any more aggressively than this buys nothing
-    -- and would just compete with scrape/lightpoll for no benefit.
+    -- nanoHost NANOHOST poll -- lowest priority, own much-slower cadence
+    -- (NANO_POLL_RATE, ~2.5 min). Only takes a turn when enabled AND due;
+    -- this data updates no faster than every 5 minutes at the source, so
+    -- polling it any more aggressively than this buys nothing and would
+    -- just compete with scrape/lightpoll for no benefit.
     nanoTicks = nanoTicks + 1
     if ENABLE_NANOHOST and nanoTicks >= nanoPollEveryNTicks then
       nanoTicks = 0
@@ -3838,9 +3277,6 @@ if Controls then
       return false
     end
 
-    -- (The Controls.Outputs mirror loop that lived here was removed in
-    -- v1.2.0.20 along with the Outputs control itself -- flagActive()
-    -- above already has everything scrape() needs.)
     for idx = 1, #Controls.Inputs do
       local a = false
       -- Input flags are offset by 3 from their InFlagNames index (per eCNA manual)
@@ -3861,11 +3297,11 @@ if Controls then
     elseif flagActive(9)  then setExclusive(Controls.Stage_Lights, 2)
     else                       setExclusive(Controls.Stage_Lights, 1) end
 
-    -- Fast-path dimmer animation trigger for House/Stage (v1.2.0.11): the
-    -- CAI I/O flags above are carried on /rtIoFDetail.xml, which is
-    -- prioritized to stay responsive (per explicit preference: flags
-    -- should never feel laggy, even if that means lighting is
-    -- comparatively worse). House and Stage happen to be the only two
+    -- Fast-path dimmer animation trigger for House/Stage: the CAI I/O
+    -- flags above are carried on /rtIoFDetail.xml, which is prioritized to
+    -- stay responsive -- flags should never feel laggy, even if that
+    -- means lighting is comparatively worse. House and Stage happen to be
+    -- the only two
     -- zones with flag-level representation at all -- but they're also the
     -- most commonly the ONLY active zones in practice (a QDC-400 board has
     -- 4 channels, but real installs usually only populate 1-2 with actual
@@ -3881,8 +3317,8 @@ if Controls then
     -- full-fidelity rtLights.xml zsta poll, since Stage's flags can't
     -- distinguish Mid1/Mid2 from None (CAI only exposes Up/Down/None for
     -- Stage). A brief, self-correcting animation toward a possibly-wrong
-    -- guess is an acceptable trade per explicit preference for smooth over
-    -- momentarily-precise; the real rtLights.xml poll corrects it shortly after.
+    -- guess is an acceptable trade for smooth over momentarily-precise;
+    -- the real rtLights.xml poll corrects it shortly after.
     if ENABLE_QDC and Controls.Zone_Preset then
       local houseState
       if     flagActive(8) then houseState = 0  -- Up
@@ -3943,15 +3379,15 @@ if Controls then
       Controls.Aux_Out[i].Boolean = flagActive(28 + i)
     end
 
-    -- v1.2.0.42: Dig1/Dig2 Power+Video (flags 1-4) are now primarily driven
-    -- by RST (see parseStatusRecord/dpMismatch above) -- RST gets these
-    -- events near-instantly via the reactive DP/DV re-poll, whereas scrape
-    -- only refreshes on its own Scrape_Interval cadence. Scrape still acts
-    -- as a backstop: only override the current (RST-set) value once it's
+    -- Dig1/Dig2 Power+Video (flags 1-4) are primarily driven by RST (see
+    -- parseStatusRecord/dpMismatch above) -- RST gets these events
+    -- near-instantly via the reactive DP/DV re-poll, whereas scrape only
+    -- refreshes on its own Scrape_Interval cadence. Scrape still acts as a
+    -- backstop: only override the current (RST-set) value once it's
     -- disagreed for TWO CONSECUTIVE scrapes in a row -- a single differing
     -- reading is treated as a possible stale/transitional echo, not yet a
-    -- correction (per Steve's explicit design). A fresh RST response resets
-    -- the streak back to 0 (see parseStatusRecord).
+    -- correction. A fresh RST response resets the streak back to 0 (see
+    -- parseStatusRecord).
     local function scrapeCorrectDP(idx, ctl)
       local newVal = flagActive(idx)
       if newVal == ctl.Boolean then
@@ -4059,7 +3495,7 @@ if Controls then
           end
         end
 
-        -- v1.2.0.29: unified preset+offset change detection. Almost all
+        -- Unified preset+offset change detection. Almost all
         -- real-world changes originate at the eCNA itself (a cinema server
         -- sends it a cue), not at this plugin -- we only find out via this
         -- poll. Skipped entirely while EITHER is still pending our own
@@ -4096,20 +3532,18 @@ if Controls then
       for j = 1, qdcChannels do
         local lvl = tonumber(cact[j]) or 0
 
-        -- v1.2.0.11: removed the "2 identical polls = settled, stop
-        -- simulating" check that was here. It caused exactly the jumpy
-        -- behavior it was meant to prevent: with multiple channels ramping
-        -- at once (or even a single channel), a transient/coincidental
-        -- repeated poll reading could trust a not-actually-final
-        -- intermediate value, snap the meter to it, and then jump again
-        -- once a later poll showed the real (different) reading -- "goes
-        -- higher then jumps low" / "pops down then pops back up". Per
-        -- explicit preference: smooth and eventually-accurate beats
-        -- momentarily-accurate and jumpy. The local ramp now runs to its
-        -- own computed completion every time, full stop -- the only thing
-        -- that still overrides it early is the no-dimmer detection just
-        -- below (2 consecutive UNEXPECTED 0% polls), which is a distinct,
-        -- narrower signal than "any 2 identical readings".
+        -- Deliberately no "2 identical polls = settled, stop simulating"
+        -- check here: with multiple channels ramping at once (or even a
+        -- single channel), a transient/coincidental repeated poll reading
+        -- could otherwise be trusted as a not-actually-final intermediate
+        -- value, snapping the meter to it and then jumping again once a
+        -- later poll showed the real (different) reading. Smooth and
+        -- eventually-accurate beats momentarily-accurate and jumpy. The
+        -- local ramp runs to its own computed completion every time, full
+        -- stop -- the only thing that still overrides it early is the
+        -- no-dimmer detection just below (2 consecutive UNEXPECTED 0%
+        -- polls), which is a distinct, narrower signal than "any 2
+        -- identical readings".
 
         -- While locally animating (see startChannelAnim), trust the
         -- simulation over the poll -- the poll is slower than a real fade
@@ -4123,9 +3557,9 @@ if Controls then
         -- here at ordinary polling cadence -- there's nothing to predict
         -- in that case, so a less-smooth appearance is expected/fine.
         if channelPendingUnmask[j] then
-          -- v1.2.0.41: one-extra-polling-cycle settling guard (Steve's
-          -- explicit request). The local ramp is done and the zone-level
-          -- pending flag(s) have genuinely cleared, but this transition
+          -- One-extra-polling-cycle settling guard. The local ramp is done
+          -- and the zone-level pending flag(s) have genuinely cleared, but
+          -- this transition
           -- involved a non-zero offset at the start or the new position --
           -- real hardware can ack the protocol-level state fields slightly
           -- ahead of the physical dimmer output actually settling to the
@@ -4170,10 +3604,10 @@ if Controls then
     checkFullyPopulated()
   end
 
-  -- ── nanoHost POS Management Data: rtmandata.xml parser (v1.3) ────
-  -- Reference: eCNA-5 statManDataJs.js showXDoc()/arInfo (Steve confirmed
-  -- eCNA-5/eCNA-10 share the same CPU and command set, so this is treated
-  -- as confirmed, not merely a hint). The real page issues
+  -- ── nanoHost POS Management Data: rtmandata.xml parser ────
+  -- Reference: eCNA-5 statManDataJs.js showXDoc()/arInfo -- eCNA-5/eCNA-10
+  -- share the same CPU and command set, so this is treated as confirmed,
+  -- not merely a hint. The real page issues
   -- rtmandata.xml?TimeStamp=<n> and the device may reply with a bare
   -- <UpToDate/> when nothing has changed since that TimeStamp -- we don't
   -- track our own TimeStamp state (always requesting fresh, unparameterized
@@ -4218,7 +3652,7 @@ if Controls then
     ctl.Color = active and "green" or "red"
   end
 
-  -- POS Cancel uses REVERSE logic per Steve's spec: Green=0 (not cancelled),
+  -- POS Cancel uses REVERSE logic: Green=0 (not cancelled),
   -- Red=1 (cancelled) -- the only one of the six flags where "flag true"
   -- means something bad rather than something good/normal.
   local function setNanoFlagRev(ctl, active)
@@ -4229,8 +3663,8 @@ if Controls then
 
   -- Placeholder shown for the four extrapolated timer fields before the
   -- first valid poll ever lands, and whenever NanoHost_HostUp is false --
-  -- per Steve: "any time the Host Up is not true, the Time counters are not
-  -- true either." Never show a numeric value (0:00, or a stale frozen
+  -- any time Host Up is not true, the Time counters are not true either.
+  -- Never show a numeric value (0:00, or a stale frozen
   -- number) that could be mistaken for real data in either of those states.
   -- Time of Day is intentionally NOT included here -- it's a self-generated
   -- live clock (see state-block comment), always valid regardless of
@@ -4258,55 +3692,18 @@ if Controls then
     return v
   end
 
-  -- ── Show Schedule (v1.3.0.12) ────────────────────────────────────
-  -- v1.3.0.13 CRASH FIX: field report -- "3114: bad argument #2 to
-  -- '__newindex' (string expected, got table)" -- crashing at plugin
-  -- STARTUP (not even waiting for a poll), since blankShowSchedule() runs
-  -- unconditionally at startup and hit this same line via the "inactive"
-  -- branch too. Root cause: Controls.X.Color apparently only accepts a
-  -- STRING at runtime on real Q-SYS hardware, not an RGB table -- the
-  -- opposite of what was assumed when picking RGB triples to exactly match
-  -- the original page's pink/lime/cyan/yellow/chocolate/orange Key legend
-  -- (every OTHER Color assignment in this entire file, going back to v1.2,
-  -- has only ever used plain color-name strings like "green"/"red" -- this
-  -- was the one place that broke that pattern, without ever having been
-  -- verified against real hardware first).
-  --
-  -- Fix: retreat to "green" for every active marker (the only two string
-  -- values -- "green" and "red" -- confirmed extensively safe across this
-  -- entire project) rather than guess at more exotic named-color strings
-  -- and risk a third crash cycle. This sacrifices the distinct per-marker
-  -- hue the real page uses, but the marker LOGIC (which row/column is
-  -- active) is unaffected and already verified against Steve's real XML
-  -- capture -- only the color richness is reduced, and only until specific
-  -- additional color-name strings are confirmed safe on real hardware.
-  -- v1.3.0.17: restored the real palette (pink/lime/chocolate/orange for
-  -- FS/FE/LS/LE) now that Steve confirmed named string colors work broadly
-  -- on real hardware -- not just "green"/"red", and it's specifically RGB
-  -- TABLES that don't work, not named strings in general (cyan/yellow/
-  -- black all confirmed working for the Now Playing highlight). Same
-  -- safe-baseline-then-pcall-upgrade pattern as setHighlightLed: "green"
-  -- always succeeds first, then a pcall-wrapped attempt at the real color
-  -- -- if pink/lime/chocolate/orange specifically ever turned out not to be
-  -- valid, this degrades to green instead of crashing, same lesson as
-  -- v1.3.0.13.
-  -- v1.3.0.23: FE's inactive color split off from its active color. Steve
-  -- confirmed the ACTIVE lime is correct (matches the real page), but
-  -- reported the INACTIVE/dimmed lime still looked "almost on" -- vibrant,
-  -- not dull -- compared to Cancel's dull green in the same screenshot.
-  --
-  -- v1.3.0.24: per Steve, ALL FOUR markers' inactive/off color switched to
-  -- a uniform dark grey -- active colors (pink/lime/chocolate/orange)
-  -- unchanged, already confirmed correct. This supersedes 1.3.0.23's
-  -- green-for-FE-only fix with a simpler, uniform "off is off" convention
-  -- for the whole marker cluster -- one dull neutral color regardless of
-  -- which marker, rather than trying to find a marker-specific muted shade
-  -- of each hue.
-  --
-  -- v1.3.0.25: "darkgray" swapped for "dimgray" -- despite the names,
-  -- "dimgray" (rgb 105,105,105) is actually darker/more muted than
-  -- "darkgray" (rgb 169,169,169), same naming trap as lime being brighter
-  -- than green (see v1.3.0.23's comment above).
+  -- ── Show Schedule ────────────────────────────────────────────────
+  -- Controls.X.Color only accepts a STRING at runtime on real Q-SYS
+  -- hardware, not an RGB table -- an RGB triple crashes with "bad argument
+  -- #2 to '__newindex' (string expected, got table)", including at plugin
+  -- startup if blankShowSchedule() is what first hits the assignment.
+  -- Every Color assignment in this file uses plain color-name strings
+  -- (e.g. "green", "pink", "lime", "chocolate", "orange", "dimgray") for
+  -- that reason. Active marker colors are pink/lime/chocolate/orange for
+  -- FS/FE/LS/LE respectively; all four markers use a uniform "dimgray" for
+  -- their inactive/off state (despite the name, "dimgray" rgb 105,105,105
+  -- is darker/more muted than "darkgray" rgb 169,169,169 -- a common
+  -- naming trap worth remembering when picking a muted neutral).
   local MARKER_COLOR_ACTIVE = {
     FS = "pink",
     FE = "lime",
@@ -4319,17 +3716,11 @@ if Controls then
     LS = "dimgray",
     LE = "dimgray",
   }
-  -- v1.3.0.22: testing THIS ONE feature in isolation, per Steve's explicit
-  -- request ("if we want to try ONE thing of the new features... getting
-  -- the LED off colors correct... if that blows it up, we know where we
-  -- went wrong") -- deliberately not reintroducing anything else from the
-  -- 1.3.0.18-20 lineage alongside it. Per Steve's own confirmed observation
-  -- that Boolean=false renders as a dimmed/dark version of whatever Color
-  -- is currently set (that's how "green" was showing as dark green when
-  -- off), setting the marker's OWN target hue regardless of active state --
-  -- rather than always resetting to "green" first -- gives each marker a
-  -- dark version of its own color when off. "green" remains the ultra-safe
-  -- fallback if the specific named color ever fails.
+  -- Boolean=false renders as a dimmed/dark version of whatever Color is
+  -- currently set -- setting the marker's OWN target hue regardless of
+  -- active state, rather than always resetting to "green" first, gives
+  -- each marker a dark version of its own color when off. "green" remains
+  -- the ultra-safe fallback if the specific named color ever fails.
   local function setMarkerLed(ctl, active, colorKey)
     if not ctl then return end
     ctl.Boolean = active
@@ -4339,9 +3730,9 @@ if Controls then
     if not ok then ctl.Color = "green" end
   end
 
-  -- v1.3.0.15: "Now Playing" highlight for the currently-airing performance
-  -- (Start/End markers specifically) -- per Steve's request to recreate the
-  -- real page's cyan/yellow StartTime/RunTime cell highlighting, using a
+  -- "Now Playing" highlight for the currently-airing performance
+  -- (Start/End markers specifically) -- recreates the real page's
+  -- cyan/yellow StartTime/RunTime cell highlighting, using a
   -- safer mechanism: a small LED next to each field that's hidden
   -- (IsInvisible=true) when not applicable, visible when it is, rather than
   -- always-visible-but-dim. Color is set to a KNOWN-SAFE baseline ("green",
@@ -4360,11 +3751,9 @@ if Controls then
     end
   end
 
-  -- v1.3.0.15: colors the StartTime/RunTime TEXT controls themselves,
-  -- closer to the real page's actual cell-background highlight -- per
-  -- Steve, "let's try to see if we can color the background on the fly."
-  -- Confirmed working on real hardware, flawless in every field test since.
-  -- Still pcall-wrapped (cheap insurance, no reason to remove it) -- the
+  -- Colors the StartTime/RunTime TEXT controls themselves, closer to the
+  -- real page's actual cell-background highlight. Still pcall-wrapped
+  -- (cheap insurance, no reason to remove it) -- the
   -- setHighlightLed() indicator LEDs above remain the mechanism this
   -- degrades to if it ever failed.
   local function tryExperimentalTextHighlight(ctl, active, preferredColor)
@@ -4417,9 +3806,9 @@ if Controls then
   -- Blanks a single Show Schedule row -- used both for rows beyond the
   -- actual show count for the day, and (via blankShowSchedule) for the
   -- whole section whenever HostUp is false.
-  -- v1.3.0.17: every control belonging to a Show Schedule row, so a whole
-  -- row (including its now-real RowNum control) can be shown/hidden
-  -- together -- per Steve, cleaner than leaving unused LEDs/boxes visible
+  -- Every control belonging to a Show Schedule row, so a whole
+  -- row (including its RowNum control) can be shown/hidden
+  -- together -- cleaner than leaving unused LEDs/boxes visible
   -- for rows with no scheduled performance. NanoHost_Show_Start/End are
   -- deliberately NOT in this list -- their IsInvisible is governed
   -- separately by setHighlightLed() ("is this the currently-airing
@@ -4474,27 +3863,20 @@ if Controls then
       return
     end
 
-    -- v1.3.0.28 BUG FIX (field report: "POS Ticket Sold... is staying
-    -- true"): xmlTag() finds the FIRST occurrence of "<tag>" anywhere in
-    -- the string it's given. Every call below used the FULL response body
-    -- (`data`) -- but <Screen> (which comes BEFORE <Stat> in the document)
-    -- contains its own per-show <Sold> and <Cancel> tags inside each
-    -- <StartTime> block, and those are the exact same tag names the
-    -- top-level Stat flags use. So `xmlTag(data, "Sold")` was silently
-    -- finding the FIRST show's own per-show Sold value instead of the
-    -- real top-level Stat/Sold flag -- and since a day's first performance
-    -- is very often already sold by the time you're checking status later
-    -- on, POS Ticket Sold would end up pinned true regardless of the
-    -- actual live flag. Same latent bug affected NanoHost_Cancel (Stat and
-    -- per-show both have a <Cancel> tag) -- masked in testing purely by
-    -- coincidence, since both happened to be 0 in every capture used so
-    -- far. No other Stat field collides with a per-show tag name (RunTim
-    -- vs RunTime, Start vs StartTime, etc. differ enough that the "<tag>"
-    -- substring search doesn't cross-match) -- confirmed by checking every
-    -- Stat tag against the per-show field set (RunTime/PerfNum/Sold/
-    -- Cancel/Title), not just assumed. Fixed by scoping every top-level
-    -- lookup below to the <Stat>...</Stat> substring specifically, instead
-    -- of the whole document.
+    -- xmlTag() finds the FIRST occurrence of "<tag>" anywhere in the
+    -- string it's given. <Screen> (which comes BEFORE <Stat> in the
+    -- document) contains its own per-show <Sold> and <Cancel> tags inside
+    -- each <StartTime> block, and those are the exact same tag names the
+    -- top-level Stat flags use -- so looking these up against the full
+    -- response body would silently find the FIRST show's own per-show
+    -- value instead of the real top-level Stat flag. No other Stat field
+    -- collides with a per-show tag name (RunTim vs RunTime, Start vs
+    -- StartTime, etc. differ enough that the "<tag>" substring search
+    -- doesn't cross-match) -- every Stat tag has been checked against the
+    -- per-show field set (RunTime/PerfNum/Sold/Cancel/Title) to confirm
+    -- this. Every top-level lookup below is scoped to the
+    -- <Stat>...</Stat> substring specifically, instead of the whole
+    -- document, to avoid this collision.
     local statStart = string.find(data, "<Stat>", 1, true)
     local statEnd   = string.find(data, "</Stat>", 1, true)
     local statBlock = (statStart and statEnd) and string.sub(data, statStart, statEnd) or data
@@ -4502,10 +3884,10 @@ if Controls then
     local function flag(tag) return xmlTag(statBlock, tag) == "1" end
 
     -- Flags always reflect ground truth at face value, regardless of
-    -- HostUp -- only the TIMERS get blanked/suppressed below, per Steve's
-    -- instruction (flags aren't durations, so "not true" doesn't apply the
-    -- same way; the HostUp LED itself is exactly what tells the operator
-    -- the timers can't be trusted right now).
+    -- HostUp -- only the TIMERS get blanked/suppressed below (flags aren't
+    -- durations, so "not true" doesn't apply the same way; the HostUp LED
+    -- itself is exactly what tells the operator the timers can't be
+    -- trusted right now).
     if Controls.NanoHost_TicketSold then setNanoFlag(Controls.NanoHost_TicketSold, flag("Sold")) end
     if Controls.NanoHost_InShow     then setNanoFlag(Controls.NanoHost_InShow,     flag("InSho")) end
     if Controls.NanoHost_PosOk      then setNanoFlag(Controls.NanoHost_PosOk,      flag("PosOk")) end
@@ -4521,7 +3903,7 @@ if Controls then
       -- it did include some -- the tick timer itself also checks
       -- nanoHostUp and won't advance anything while this is false. The Show
       -- Schedule is nanoHost-sourced data too, so it gets the same
-      -- treatment (v1.3.0.12).
+      -- treatment.
       blankNanoTimers()
       blankShowSchedule()
       dbg("NanoHost: HostUp=false, timers and show schedule blanked")
@@ -4567,10 +3949,10 @@ if Controls then
 
     nanoValid = true  -- only ever set true once we've actually seen a real, HostUp=true dataset
 
-    -- ── Show Schedule (v1.3.0.12) ────────────────────────────────────
+    -- ── Show Schedule ────────────────────────────────────────────────
     -- Marker indices from Stat -- 0-based row pointers (or a 255 sentinel
-    -- meaning "not applicable right now," per Steve's explanation; a plain
-    -- equality check against each row's 0-based index handles this
+    -- meaning "not applicable right now"); a plain equality check against
+    -- each row's 0-based index handles this
     -- correctly without any special-casing, since 255 can never match a
     -- real row index within MAX_SHOWS=10).
     local fsIdx    = tonumber(xmlTag(statBlock, "FS"))
@@ -4595,7 +3977,7 @@ if Controls then
         if Controls.NanoHost_Show_FE    and Controls.NanoHost_Show_FE[i]    then setMarkerLed(Controls.NanoHost_Show_FE[i],    feIdx    == rowIdx0, "FE") end
         if Controls.NanoHost_Show_LS    and Controls.NanoHost_Show_LS[i]    then setMarkerLed(Controls.NanoHost_Show_LS[i],    lsIdx    == rowIdx0, "LS") end
         if Controls.NanoHost_Show_LE    and Controls.NanoHost_Show_LE[i]    then setMarkerLed(Controls.NanoHost_Show_LE[i],    leIdx    == rowIdx0, "LE") end
-        -- v1.3.0.15: "Now Playing" highlight -- guaranteed-safe indicator
+        -- "Now Playing" highlight -- guaranteed-safe indicator
         -- LED (setHighlightLed) plus an experimental attempt to also color
         -- the StartTime/RunTime text itself (tryExperimentalTextHighlight,
         -- pcall-protected -- see its comment).
@@ -4661,7 +4043,7 @@ if Controls then
     if Controls.Zone_Offset_Text[zone] then Controls.Zone_Offset_Text[zone].String = "0" end
   end
 
-  -- ── Local dimmer meter simulation (v1.2.0.9) ────────────────
+  -- ── Local dimmer meter simulation ──────────────────────────
   -- Begin animating channel `ch` (1-based) from wherever it's currently
   -- displayed toward `target` (0-100%).
   --
@@ -4691,9 +4073,9 @@ if Controls then
   -- amount gets it finishing closer to when the real transition actually
   -- completes. This does not change anything sent to the eCNA -- it only
   -- affects how fast our local prediction moves.
-  local DETECTION_LAG_COMPENSATION = 2  -- seconds (raised from 1.5s after live-Core field testing showed it tracking well)
+  local DETECTION_LAG_COMPENSATION = 2  -- seconds
   local channelSimLevel = {}  -- channelSimLevel[ch] = current simulated level (float), only meaningful while channelAnimating[ch]
-  -- v1.2.0.30: for a SELF-initiated change (button press, fader drag), the
+  -- For a SELF-initiated change (button press, fader drag), the
   -- eCNA hasn't actually made the change yet when our local animation
   -- starts -- our own command still has to travel the shared connection,
   -- possibly behind something already in flight. If the local animation's
@@ -4713,42 +4095,27 @@ if Controls then
   local channelWaitZone = {}  -- channelWaitZone[ch] = zone number to check, or nil (poll/flag-detected changes don't set this)
   local channelWaitKind = {}  -- channelWaitKind[ch] = "preset" or "offset" -- which pending flag to check for that zone
 
-  -- v1.2.0.41: two related fixes for Steve's report that the jump-to-old-
-  -- value symptom persists more broadly than the None-specific case, and
-  -- that a combined preset+offset change seemed to animate at the
-  -- offset's fixed rate instead of the preset's configured rate.
+  -- beginPresetPending ALWAYS also resets the zone's offset to 0 (manual
+  -- sec 5.9), setting BOTH presetPending[zone] AND offsetPending[zone]
+  -- true -- so a preset-tagged channel wait (channelWaitKind[ch] ==
+  -- "preset") must check BOTH flags, not just presetPending, before
+  -- unmasking. Real hardware typically acks the preset state field (zsta)
+  -- almost immediately -- well before the physical dimmer finishes its
+  -- multi-second fade, and often before the offset has genuinely
+  -- re-settled to 0 either -- so checking only presetPending would let the
+  -- channel unmask while offsetPending is still genuinely pending, and the
+  -- next poll's still-transitional cact reading would pop the meter back.
   --
-  -- The fade-rate question traced out as already correct in code (the
-  -- unified detection in parseLights already uses the preset's own fade
-  -- whenever the preset changes, even if the offset changes alongside it
-  -- -- confirmed via targeted reproduction). The broader jump-back,
-  -- though, is real: beginPresetPending ALWAYS also resets the zone's
-  -- offset to 0 (manual sec 5.9), setting BOTH presetPending[zone] AND
-  -- offsetPending[zone] true -- but a preset-tagged channel wait
-  -- (channelWaitKind[ch] == "preset") only ever checked presetPending,
-  -- never offsetPending. Real hardware typically acks the preset state
-  -- field (zsta) almost immediately -- well before the physical dimmer
-  -- finishes its multi-second fade, and often before the offset has
-  -- genuinely re-settled to 0 either. That let the channel unmask the
-  -- instant our own local ramp finished, even though offsetPending was
-  -- still genuinely pending -- the next poll's still-transitional cact
-  -- reading would flow straight through and pop the meter back.
-  --
-  -- Fix 1 (below, in startChannelAnim's guard and meterTimer's stillPending
-  -- check): for a "preset" wait, require BOTH presetPending[zone] AND
-  -- offsetPending[zone] to clear, not just presetPending -- matching what
-  -- beginPresetPending actually does.
-  --
-  -- Fix 2 (Steve's explicit follow-up request): even once both zone-level
-  -- flags genuinely clear and our own local ramp is done, don't trust the
-  -- very first live poll that arrives -- wait one more full polling cycle.
-  -- This absorbs the residual gap where the protocol-level state fields
-  -- confirm slightly ahead of the physical dimmer output actually
-  -- settling. Applies whenever the transition involved an offset, either
-  -- at the start (a non-zero offset was active/being cleared) or at the
-  -- new position (the target itself has a non-zero offset component) --
-  -- not to plain preset-to-preset moves with no offset in play at all,
-  -- which stay exactly as responsive as before. (channelInvolvesOffset and
+  -- Even once both zone-level flags genuinely clear and the local ramp is
+  -- done, the very first live poll that arrives still isn't trusted --
+  -- wait one more full polling cycle. This absorbs the residual gap where
+  -- the protocol-level state fields confirm slightly ahead of the physical
+  -- dimmer output actually settling. Applies whenever the transition
+  -- involved an offset, either at the start (a non-zero offset was
+  -- active/being cleared) or at the new position (the target itself has a
+  -- non-zero offset component) -- not to plain preset-to-preset moves with
+  -- no offset in play at all, which stay maximally responsive.
+  -- (channelInvolvesOffset and
   -- channelPendingUnmask themselves are declared earlier, alongside
   -- channelAnimating -- parseLights, defined before this point in the
   -- file, needs them as upvalues; see the comment there.)
@@ -4771,8 +4138,8 @@ if Controls then
     -- Population tracking: none of it is valid for a new target either --
     -- Status must not read "OK" again until everything has freshly
     -- responded from whichever unit we're now connecting to. Full reset
-    -- (both CAI and HTTP sides) -- unlike connect()'s own CAI-only reset
-    -- (v1.2.0.32), an actual target change really does invalidate
+    -- (both CAI and HTTP sides) -- unlike connect()'s own CAI-only reset,
+    -- an actual target change really does invalidate
     -- previously-fetched HTTP data too (names, dimmer setup, LIN scan,
     -- scrape all belonged to the OLD unit). connect(), called right after
     -- this by every caller, only re-does the CAI half on top -- but
@@ -4788,8 +4155,8 @@ if Controls then
     httpBusy         = false
     currentReqType   = "SCRAPE"
     currentApplyFn   = nil
-    routineTicks     = 0  -- v1.2.0.41: fresh target restarts the LIGHTPOLL countdown from zero
-    nanoTicks        = 0  -- v1.3: fresh target restarts the NANOHOST countdown from zero
+    routineTicks     = 0  -- fresh target restarts the LIGHTPOLL countdown from zero
+    nanoTicks        = 0  -- fresh target restarts the NANOHOST countdown from zero
 
     -- Learned dimmer configuration/state -- all specific to whichever unit
     -- we were last actually talking to
@@ -4843,14 +4210,15 @@ if Controls then
     dbg("Reset all learned state and queues for new target")
   end
 
-  -- v1.2.0.41: `waitZone`'s "is the self-initiated wait for this channel
-  -- still genuinely live" question now has to check BOTH presetPending and
+  -- `waitZone`'s "is the self-initiated wait for this channel still
+  -- genuinely live" question has to check BOTH presetPending and
   -- offsetPending whenever the wait is preset-tagged, because
   -- beginPresetPending always sets both (selecting a preset resets the
   -- zone's offset to 0 on the real device, manual sec 5.9) -- checking only
-  -- presetPending left a gap where the offset side was still genuinely
-  -- pending confirmation. An offset-tagged wait only ever set offsetPending
-  -- to begin with, so it alone is still the right (and only) check there.
+  -- presetPending would leave a gap where the offset side is still
+  -- genuinely pending confirmation. An offset-tagged wait only ever sets
+  -- offsetPending to begin with, so it alone is still the right (and
+  -- only) check there.
   local function selfInitWaitLive(ch)
     local waitZone = channelWaitZone[ch]
     if not waitZone then return false end
@@ -4862,9 +4230,9 @@ if Controls then
     return false
   end
 
-  -- v1.2.0.41: route every place that would otherwise unmask a channel
-  -- (clear channelAnimating) through here. Per Steve's explicit request,
-  -- once the local ramp is done and the zone-level flag(s) have genuinely
+  -- Routes every place that would otherwise unmask a channel
+  -- (clear channelAnimating) through here. Once the local ramp is done and
+  -- the zone-level flag(s) have genuinely
   -- cleared, a channel whose transition involved a non-zero offset at
   -- either end still doesn't trust the very next live poll -- real
   -- hardware can ack the protocol-level state fields slightly ahead of the
@@ -4900,24 +4268,16 @@ if Controls then
     local start = Controls.Channel_Level[ch] and Controls.Channel_Level[ch].Value or target
     local distance = math.abs(target - start)
 
-    -- v1.2.0.41 fix (extended in v1.2.0.36 via selfInitWaitLive, see above):
-    -- v1.2.0.31 added a guard against a poll/flag-detected call
-    -- (applyCompensation=true) landing on top of a still-active
-    -- self-initiated wait (v1.2.0.30) -- but only inside the `distance==0`
-    -- branch below. Steve confirmed the exact same symptom still happens
-    -- for a self-initiated None press when a non-zero offset is active:
-    -- turns out the redundant fast-path call (House/Stage flags detecting
-    -- the same None transition, ~2s cycle) doesn't reliably land AFTER our
-    -- own floor-clamped ~0.5s ramp has already reached 0 -- it can just as
-    -- easily land WHILE that ramp is still mid-flight (distance ~= 0),
-    -- which falls through to the *general* ramp-setup path further below.
-    -- That path's own `else` clause unconditionally set
-    -- `channelWaitZone[ch] = nil` whenever applyCompensation was true, with
-    -- no check for a still-active self-initiated wait -- the identical bug,
-    -- just unreachable by the v1.2.0.31 fix because it only patched the
-    -- distance==0 case. Moving the check up here, before the distance==0
-    -- branch, covers BOTH cases with one guard: a poll/flag-detected call
-    -- that finds a self-initiated wait still genuinely pending (confirmed
+    -- A guard against a poll/flag-detected call (applyCompensation=true)
+    -- landing on top of a still-active self-initiated wait must cover the
+    -- redundant fast-path call (House/Stage flags detecting the same None
+    -- transition, ~2s cycle) regardless of whether it lands before or
+    -- after our own floor-clamped ~0.5s ramp has already reached its
+    -- target (distance == 0) or while that ramp is still mid-flight
+    -- (distance ~= 0, falling through to the *general* ramp-setup path
+    -- further below). Checking here, before the distance==0 branch, covers
+    -- BOTH cases with one guard: a poll/flag-detected call that finds a
+    -- self-initiated wait still genuinely pending (confirmed
     -- via the zone-level presetPending/offsetPending flag, not just the
     -- presence of channelWaitZone) is ignored outright -- no writes, no
     -- state changes -- regardless of whether it happened to arrive before
@@ -4952,28 +4312,28 @@ if Controls then
       finishChannelWait(ch)
       return
     end
-    -- v1.2.0.18 fix: even an "instant" target (no fade data, e.g. None,
-    -- which passes fadeSec=nil) now runs a brief floor-clamped animation
-    -- rather than truly bypassing the system. The bypass was a real race:
-    -- setting channelAnimating=false immediately opened a window where an
-    -- HTTP response already in flight *before* this command was sent
-    -- (single connection -- only one request outstanding at a time) could
-    -- arrive carrying the OLD level, get applied straight through (since
-    -- nothing was masking it), and briefly show the wrong value before our
-    -- own command's response corrected it moments later -- meter pops back
-    -- up, then pops back down. Keeping channelAnimating=true, even for
-    -- just the ~0.5s floor, closes that window the same way every other
-    -- transition is already protected.
+    -- Even an "instant" target (no fade data, e.g. None, which passes
+    -- fadeSec=nil) runs a brief floor-clamped animation rather than truly
+    -- bypassing the system -- a true bypass (setting channelAnimating=false
+    -- immediately) opens a window where an HTTP response already in
+    -- flight *before* this command was sent (single connection -- only
+    -- one request outstanding at a time) could arrive carrying the OLD
+    -- level, get applied straight through (since nothing is masking it),
+    -- and briefly show the wrong value before our own command's response
+    -- corrects it moments later -- meter pops back up, then pops back
+    -- down. Keeping channelAnimating=true, even for just the ~0.5s floor,
+    -- closes that window the same way every other transition is already
+    -- protected.
     --
-    -- v1.2.0.29 fix: DETECTION_LAG_COMPENSATION only makes sense for a
-    -- change we found out about *late*, via polling -- there's no lag to
-    -- compensate for when the change is our own button press or fader
-    -- drag; we know about it instantly. Applying the compensation
-    -- unconditionally made self-initiated offset changes (fixed 3s fade)
-    -- finish roughly 2/3 early, unmasking the channel while the real
-    -- device was still genuinely mid-transition -- the next live poll
-    -- would then report the real, still-low level, popping the meter back
-    -- down before a later poll finally showed the correct settled value.
+    -- DETECTION_LAG_COMPENSATION only makes sense for a change we found
+    -- out about *late*, via polling -- there's no lag to compensate for
+    -- when the change is our own button press or fader drag; we know
+    -- about it instantly. Applying the compensation unconditionally would
+    -- make self-initiated offset changes (fixed 3s fade) finish roughly
+    -- 2/3 early, unmasking the channel while the real device is still
+    -- genuinely mid-transition -- the next live poll would then report the
+    -- real, still-low level, popping the meter back down before a later
+    -- poll finally shows the correct settled value.
     local effectiveFadeSec = fadeSec or 0
     if applyCompensation then
       effectiveFadeSec = effectiveFadeSec - DETECTION_LAG_COMPENSATION
@@ -4983,17 +4343,17 @@ if Controls then
     channelSimTarget[ch] = target
     channelSimRate[ch]   = distance / effectiveFadeSec  -- %/sec; VARIES per transition so the whole thing takes ~effectiveFadeSec seconds regardless of distance
     channelAnimating[ch] = true
-    channelPendingUnmask[ch] = nil  -- v1.2.0.41: a fresh animation invalidates any leftover grace state from a prior one
-    -- v1.2.0.30: for a self-initiated change (applyCompensation false),
-    -- remember which zone-level pending flag must ALSO clear before this
-    -- channel is allowed to trust live polls again -- our own local
-    -- animation reaching its target doesn't mean the eCNA has actually
-    -- confirmed anything yet. Poll/flag-detected changes (applyCompensation
-    -- true) don't need this -- the confirmation IS the detection. Safe to
-    -- clear unconditionally here (v1.2.0.41): the one case that made this
-    -- unsafe -- a poll/flag-detected call landing on a still-live
-    -- self-initiated wait -- is already intercepted and returned early,
-    -- above, before either branch of this function body runs at all.
+    channelPendingUnmask[ch] = nil  -- a fresh animation invalidates any leftover grace state from a prior one
+    -- For a self-initiated change (applyCompensation false), remember
+    -- which zone-level pending flag must ALSO clear before this channel is
+    -- allowed to trust live polls again -- our own local animation
+    -- reaching its target doesn't mean the eCNA has actually confirmed
+    -- anything yet. Poll/flag-detected changes (applyCompensation true)
+    -- don't need this -- the confirmation IS the detection. Safe to clear
+    -- unconditionally here: the one case that would make this unsafe -- a
+    -- poll/flag-detected call landing on a still-live self-initiated wait
+    -- -- is already intercepted and returned early, above, before either
+    -- branch of this function body runs at all.
     if not applyCompensation and zone and kind then
       channelWaitZone[ch] = zone
       channelWaitKind[ch] = kind
@@ -5002,16 +4362,15 @@ if Controls then
     end
   end
 
-  -- v1.2.0.10 correction: field testing revealed the opposite of what was
-  -- assumed in v1.2.0.9. None is essentially INSTANT ("as fast as the UI
-  -- can update") when selected from any other preset. The ~3s that WAS
-  -- attributed to None is actually the Offset control's own fade time --
-  -- moving the offset takes ~3s to reach its new level from ANY preset,
-  -- including None. So preset-button transitions (Up/Down/Mid1/Mid2) still
-  -- use their configured Setup: QDC-400 Dimmers fade time, None-via-button
-  -- is instant, and ANY offset adjustment (regardless of active preset)
-  -- uses a fixed ~3s -- never the active preset's own fade time.
-  local NONE_FADE_SECONDS   = nil  -- None (via preset button) has no configured fade data; startChannelAnim now floors this to a brief ~0.5s animation rather than a true instant bypass (see v1.2.0.18 fix), which still feels effectively immediate but closes a stale-poll race
+  -- None is essentially INSTANT ("as fast as the UI can update") when
+  -- selected from any other preset -- the ~3s fade belongs to the Offset
+  -- control, not None: moving the offset takes ~3s to reach its new level
+  -- from ANY preset, including None. So preset-button transitions
+  -- (Up/Down/Mid1/Mid2) use their configured Setup: QDC-400 Dimmers fade
+  -- time, None-via-button is instant, and ANY offset adjustment
+  -- (regardless of active preset) uses a fixed ~3s -- never the active
+  -- preset's own fade time.
+  local NONE_FADE_SECONDS   = nil  -- None (via preset button) has no configured fade data; startChannelAnim floors this to a brief ~0.5s animation rather than a true instant bypass, which still feels effectively immediate but closes a stale-poll race
   local OFFSET_FADE_SECONDS = 3    -- fixed duration for ANY offset change, field-measured ~3s, regardless of active preset
 
   -- Trigger local animation for every channel assigned to `zone` (1-based)
@@ -5025,7 +4384,7 @@ if Controls then
   -- correct to the true combined level once a later poll overwrote it.
   -- `applyCompensation` should be true only for changes detected via
   -- polling or the fast flag-scrape path -- never for our own button press.
-  -- `priorOffset` (v1.2.0.41): whatever offset was active immediately
+  -- `priorOffset`: whatever offset was active immediately
   -- before this transition began, if known -- used only to decide whether
   -- the one-extra-poll-cycle settling guard applies (see
   -- channelInvolvesOffset above); defaults to offsetVal itself when not
@@ -5072,7 +4431,7 @@ if Controls then
           target = offsetVal  -- None (or not yet known): offset is the absolute level
         end
         if target then
-          -- v1.2.0.41: this is by definition an offset change -- always
+          -- This is by definition an offset change -- always
           -- treated as "involves offset" for the one-extra-poll-cycle
           -- settling guard, regardless of whether offsetVal itself happens
           -- to be 0 (e.g. dragging back down to 0 still means we started
@@ -5103,7 +4462,7 @@ if Controls then
           channelSimLevel[ch] = cur
           if Controls.Channel_Level[ch] then Controls.Channel_Level[ch].Value = cur end
           if Controls.Channel_Level_Text[ch] then Controls.Channel_Level_Text[ch].String = string.format("%d%%", math.floor(cur + 0.5)) end
-          -- v1.2.0.41: once channelPendingUnmask[ch] is set, this channel is
+          -- Once channelPendingUnmask[ch] is set, this channel is
           -- purely waiting on parseLights to consume its one-extra-poll-
           -- cycle grace (see finishChannelWait) -- nothing left for this
           -- tick to decide (cur/target already both parked at the same
@@ -5143,26 +4502,16 @@ if Controls then
   -- -- it's the Q-SYS Core's own clock (see state-block comment), always
   -- live regardless of nanoHost connectivity.
   --
-  -- v1.3.0.4 BUG FIX: ASTim/AETim were ticking up independently of whether
-  -- their own BSTim/BETim counterpart had actually reached 0 -- confirmed
-  -- against a real side-by-side capture showing the device itself holding
-  -- Time After Start at 0:00 while Time Before Start was still counting
-  -- down (98:02), i.e. the "after" counter for a given event does not start
-  -- moving until the matching "before" counter reaches 0. Ticking both
-  -- independently let ASTim drift to a nonsensical nonzero value (2:21)
-  -- while BSTim was still nonzero (98:03) -- a real device could never
-  -- report that combination. Fixed by gating each up-counter's tick on its
-  -- own down-counter having already reached exactly 0.
+  -- The "after" counter for a given event does not start moving until the
+  -- matching "before" counter reaches 0 -- a real device never reports a
+  -- nonzero "after" value while its "before" counterpart is still
+  -- nonzero. Each up-counter's tick is gated on its own down-counter
+  -- having already reached exactly 0.
   --
-  -- v1.3.0.27: forces an early nanoHost refresh, reusing httpRequest()'s
-  -- existing NANOHOST poll tier (forcing nanoTicks straight to
-  -- nanoPollEveryNTicks makes a fetch immediately due on the next check) --
-  -- shared by both the Time Before Feature Start and Time Before Feature
-  -- End triggers below.
-  --
-  -- v1.3.0.29: delay reduced from 5s to 4s, per Steve.
-  --
-  -- v1.3.0.32: delay reduced from 4s to 3s, per Steve.
+  -- Forces an early nanoHost refresh, reusing httpRequest()'s existing
+  -- NANOHOST poll tier (forcing nanoTicks straight to nanoPollEveryNTicks
+  -- makes a fetch immediately due on the next check) -- shared by both the
+  -- Time Before Feature Start and Time Before Feature End triggers below.
   local function forceEarlyNanoHostRefresh(reason)
     Timer.CallAfter(function()
       nanoTicks = nanoPollEveryNTicks
@@ -5181,8 +4530,8 @@ if Controls then
         -- counterpart first reads 0, not the same one.
         local beforeStartWasZero = (nanoBSSec == 0)
         local beforeEndWasZero   = (nanoBESec == 0)
-        -- v1.3.0.27: per Steve, 255:59 (NANO_TIME_MAX) on a "before" counter
-        -- means the eCNA has no real countdown data yet -- NOT a genuine
+        -- 255:59 (NANO_TIME_MAX) on a "before" counter means the eCNA has
+        -- no real countdown data yet -- NOT a genuine
         -- "255 minutes 59 seconds until this happens" duration. Ticking it
         -- down from there would fabricate a countdown that isn't real, so
         -- BSTim/BETim are frozen at the sentinel instead of decrementing
@@ -5206,8 +4555,8 @@ if Controls then
         if Controls.NanoHost_TimeAfterStart  then Controls.NanoHost_TimeAfterStart.String  = fmtMinSec(nanoASSec) end
         if Controls.NanoHost_TimeBeforeEnd   then Controls.NanoHost_TimeBeforeEnd.String   = fmtMinSec(nanoBESec) end
         if Controls.NanoHost_TimeAfterEnd    then Controls.NanoHost_TimeAfterEnd.String    = fmtMinSec(nanoAESec) end
-        -- v1.3.0.26/27: force an early nanoHost flag refresh around feature
-        -- start/end, per Steve. Trigger point is each "before" counter
+        -- Forces an early nanoHost flag refresh around feature start/end.
+        -- Trigger point is each "before" counter
         -- reaching 0:01 (one tick before its real 0:00 crossover) rather
         -- than 0:00 itself, specifically because BSTim/BETim floor at 0 and
         -- STAY there -- checking "== 0" would fire on every single tick for
@@ -5241,7 +4590,7 @@ if Controls then
     if evt == TcpSocket.Events.Connected then
       httpConnected = true
       httpBuf = ""
-      httpRequest()  -- send immediately on connect, identical to v1.0.0
+      httpRequest()  -- send immediately on connect
     elseif evt == TcpSocket.Events.Data then
       httpBuf = httpBuf .. sock:Read(sock.BufferLength)
     elseif evt == TcpSocket.Events.Closed
@@ -5328,7 +4677,7 @@ if Controls then
     setNanoFlag(Controls.NanoHost_HostUp,     false)
     setNanoFlagRev(Controls.NanoHost_Cancel,  false)
     blankNanoTimers()
-    -- v1.3.0.17: row numbers never change (row 3 is always "3") -- set once
+    -- Row numbers never change (row 3 is always "3") -- set once
     -- here, before blankShowSchedule() hides every row until real data
     -- arrives.
     if Controls.NanoHost_Show_RowNum then

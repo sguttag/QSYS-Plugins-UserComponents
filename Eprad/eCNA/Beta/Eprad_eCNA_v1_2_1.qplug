@@ -142,12 +142,10 @@ function GetControls(props)
   table.insert(ctrls, { Name="In_Names",  ControlType="Text", Count=16, UserPin=true, PinStyle="Output", Description="User-defined Input names (In1-In16)" })
   table.insert(ctrls, { Name="Out_Names", ControlType="Text", Count=16, UserPin=true, PinStyle="Output", Description="User-defined Aux Output names (Out1-Out16)" })
 
-  -- Web scrape output/input flag indicators (LED indicators, driven by scrape)
-  -- (Outputs 1-44 removed in v1.2.0.20 -- it was a write-only internal
-  -- mirror with no PrettyName/layout and nothing ever read it back;
-  -- flagActive() derives directly from the parsed flag list instead. Kept
-  -- as a Control it only produced 88 permanent plugin-checker complaints
-  -- for zero functional benefit.)
+  -- Web scrape input flag indicators (LED indicators, driven by scrape).
+  -- Output flags have no equivalent mirror control -- flagActive() (see
+  -- scrape() below) derives output state directly from the parsed flag
+  -- list, which is all the Outputs page toggle buttons need.
   table.insert(ctrls, { Name="Inputs",  ControlType="Indicator", IndicatorType="Led", Count=31, UserPin=true, PinStyle="Output", Description="Input flags (web scrape)" })
 
   -- Name refresh trigger buttons
@@ -161,27 +159,19 @@ function GetControls(props)
     table.insert(ctrls, { Name="Zone_Preset",         ControlType="Button", Count=qZones*5,   UserPin=true, PinStyle="Both",   ButtonType="Toggle", Description="Zone light preset, 5 per zone in order Up/Down/Mid1/Mid2/None" })
     table.insert(ctrls, { Name="Zone_Offset",         ControlType="Knob",   ControlUnit="Percent", Count=qZones,     UserPin=true, PinStyle="Both",   Min=-100, Max=100, Description="Zone light level offset %, -100 to +100" })
     table.insert(ctrls, { Name="Zone_Offset_Text",    ControlType="Text",   Count=qZones,     UserPin=true, PinStyle="Both",   Description="Zone light level offset % (editable), -100 to +100" })
-    -- v1.2.0.41: momentary step buttons beside the offset readout. A quick
-    -- press/release nudges the offset by 1; holding past 2s repeats at 1
-    -- unit per 0.5s until released. ButtonType="Momentary" (not "Toggle" or
-    -- "Trigger") so Boolean genuinely tracks pressed/held/released, which
-    -- the hold-to-repeat timer logic below depends on.
+    -- Momentary step buttons beside the offset readout: quick press/release
+    -- nudges the offset by 1; holding past 2s repeats at 1 unit per 0.5s
+    -- until released. ButtonType="Momentary" (not "Toggle" or "Trigger") is
+    -- required so Boolean genuinely tracks pressed/held/released, which the
+    -- hold-to-repeat timer logic below depends on.
     table.insert(ctrls, { Name="Zone_Offset_Dec",     ControlType="Button", Count=qZones,     UserPin=true, PinStyle="Both",   ButtonType="Momentary", Description="Decrease zone offset by 1; hold to repeat at 1 per 0.5s after 2s" })
     table.insert(ctrls, { Name="Zone_Offset_Inc",     ControlType="Button", Count=qZones,     UserPin=true, PinStyle="Both",   ButtonType="Momentary", Description="Increase zone offset by 1; hold to repeat at 1 per 0.5s after 2s" })
     table.insert(ctrls, { Name="Channel_Level",       ControlType="Knob",   ControlUnit="Percent", Count=qChannels,  UserPin=true, PinStyle="Output", Min=0, Max=100, Description="Dimmer channel output level %, 0 to 100" })
     table.insert(ctrls, { Name="Channel_Level_Text",  ControlType="Text",   Count=qChannels,  UserPin=true, PinStyle="Output", Description="Dimmer channel output level % (text)" })
     table.insert(ctrls, { Name="Channel_Zone",        ControlType="Text",   Count=qChannels,  UserPin=true, PinStyle="Output", Description="Zone name assigned to this dimmer channel" })
     table.insert(ctrls, { Name="Channel_Present",     ControlType="Indicator", IndicatorType="Led", Count=qChannels, UserPin=true, PinStyle="Output", Description="Lit when this channel has reported a non-zero level at least once; goes dark after 2 consecutive 0% polls where a non-zero level was expected (likely no dimmer/power present)" })
-    -- Refresh_Dimmer_Setup and Refresh_LIN_Network consolidated into the
-    -- single Refresh_Setup control above (v1.2.0.11).
     table.insert(ctrls, { Name="QDC_Board_Count",       ControlType="Text",   Count=1, UserPin=true, PinStyle="Output", Description="Number of active QDC-400 boards found on the Local I/O (LIN) Network at last check" })
   end
-
-  -- (Last_Tx/Last_Rx/Last_Error and the Debug tab that displayed them were
-  -- removed entirely in v1.2.0.21 -- every value they ever showed was
-  -- already duplicated to the Q-SYS Debug window via dbg()/print(), which
-  -- is unconditionally active and is what's actually used for
-  -- troubleshooting in practice. See the help file for the full note.)
 
   return ctrls
 end
@@ -193,72 +183,41 @@ function GetProperties(props)
   local list = {
     { Name="Num_Macros",  Type="integer",  Min=0,   Max=50, Value=50 },
     { Name="Num_RDI",     Type="integer",  Min=0,   Max=5,  Value=5  },
-    -- v1.2.0.14: renamed from Poll_Rate/Scrape_Rate (which were integer in
-    -- v1.1) to avoid the same caching issue that hit the float->double fix
-    -- -- Designer appears to cache a property's TYPE on an already-placed
-    -- instance, requiring a full remove/re-add to pick up a type change on
-    -- an EXISTING property name. A brand-new name has no stale type to
-    -- conflict with, so existing installs should just gain this as a new
-    -- property (with the old integer one quietly dropping off) without
-    -- needing to be torn out and replaced -- at the cost of losing
-    -- whatever custom rate they'd set, back to the default, once.
-    -- v1.2.0.45: Poll_Interval REMOVED from Properties entirely -- its only
-    -- real purpose (confirmed against the eCNA-10 manual, page 89, item 1)
-    -- is keeping the CAI channel from being bumped by a second client after
-    -- 60s idle, not a user-tunable responsiveness knob like Scrape/
-    -- LightPoll_Interval. There's no legitimate reason for an installer to
-    -- ever change it, so per Steve it now lives as a fixed internal
-    -- constant (POLL_RATE, see below) instead of a Designer-exposed
-    -- property. Any existing instance with a custom Poll_Interval value
-    -- quietly drops it, same as the old integer Poll_Rate/Scrape_Rate
-    -- properties did when renamed in v1.2.0.14 above.
+    -- Type is double, not integer -- if this property's Type is ever
+    -- changed again, give it a new Name rather than editing Type in place.
+    -- Designer caches a property's declared Type per name on an
+    -- already-placed instance, so changing Type on an existing property
+    -- name does not take effect for instances already in a design; a new
+    -- name has no stale type to conflict with, and the old one just drops
+    -- off (any custom value set on it is lost, back to the new default).
+    -- There is no user-tunable "Poll_Interval" property: the CAI keep-alive
+    -- poll that prevents a second client from bumping this connection after
+    -- an idle period (eCNA-10 manual, page 89) runs on a fixed internal
+    -- rate (POLL_RATE, see below) rather than a Designer-exposed property.
     { Name="Scrape_Interval", Type="double",  Min=0.5,   Max=20, Value=2  },
-    -- v1.2.0.41: decouples the dimmer LIGHTPOLL (/rtLights.xml) from
-    -- Scrape_Interval. Previously LIGHTPOLL consumed every OTHER routine
-    -- turn no matter how low Scrape_Interval was set -- so lowering
-    -- Scrape_Interval alone never actually sped up real scrape cadence, it
-    -- just meant scrape and lightpoll got faster together (real
-    -- scrape-to-scrape gap stayed ~2x whatever the "turn" cost was). Now
-    -- LIGHTPOLL runs on its own slower cadence and Scrape_Interval controls
-    -- real scrape cadence directly. Default of 3s (rounds to the same 1:1
-    -- alternation as before at the default Scrape_Interval of 2s, so
-    -- out-of-the-box behavior is unchanged) -- field-tested by Steve at a
-    -- range of Scrape_Interval values down to 0.5s with no issues; a
-    -- LightPoll_Interval of 3 (vs. the field-tested default Scrape_Interval
-    -- of 2) noticeably improved offset-change responsiveness over the
-    -- initial 4s figure. Meter animation between real polls already masks
-    -- the slower dimmer refresh (per Steve: "we're already 'faking' the
-    -- dimmer meters with our animation"), so LIGHTPOLL doesn't need to be
-    -- nearly as frequent as scrape once they're no longer forced to share a
-    -- turn 1:1.
-    -- v1.2.0.45: Max reduced from 60 to 20, same reasoning as
-    -- Scrape_Interval above -- no legitimate reason to run slower than
-    -- that; higher values were only ever useful for testing/comparison.
+    -- Dimmer status polling (LIGHTPOLL, /rtLights.xml) runs on its own
+    -- cadence rather than consuming every other HTTP turn alongside scrape,
+    -- so Scrape_Interval controls real scrape cadence directly and can be
+    -- lowered without also slowing dimmer responsiveness (see httpRequest()
+    -- below). Meter animation between polls smooths the slower dimmer
+    -- refresh, so LIGHTPOLL doesn't need to run as fast as scrape.
     { Name="LightPoll_Interval", Type="double", Min=0.5, Max=20, Value=3 },
     { Name="Enable_QDC_Lighting", Type="boolean",  Value=false },
-    -- v1.2.1.49: QDC_Zones/QDC_Channels are now conditionally hidden via
-    -- RectifyProperties' IsHidden below (shown only when
-    -- Enable_QDC_Lighting=Yes). An earlier attempt at this in this same
-    -- project was abandoned after the properties dialog appeared not to
-    -- redraw reliably -- per the v1.3 project's independent investigation
-    -- (which retested the identical RectifyProperties/IsHidden mechanism in
-    -- isolation and confirmed it works), the real, most likely cause was a
-    -- stray apostrophe inside a Description/PrettyName/Legend/Text schema
-    -- string elsewhere in that same round of changes -- a single apostrophe
-    -- in any string value Q-SYS ingests as control schema silently drops
-    -- every control on every page, with no error, and the hiding attempt
-    -- simply got blamed as the last thing touched. Confirmed zero
-    -- apostrophes in any schema string in this file before making this
-    -- change (see design notes). They still only take effect once
-    -- Enable_QDC_Lighting=Yes.
-    -- v1.2.0.47: Min relaxed from 2 to 1. Zone 1/2 are fixed by the eCNA as
-    -- "House"/"Stage", but that's just how the device names them -- nothing
-    -- requires an installation to actually use both. A single-zone site
-    -- (House only) can now be configured that way instead of always
-    -- carrying an unused Stage row. (This was previously untested at 1 --
-    -- a real Q-SYS quirk around single-count controls made it silently
-    -- broken; that's fixed in this same build, see the runtime comment
-    -- near qdcZones/qdcChannels.)
+    -- QDC_Zones/QDC_Channels are conditionally hidden via RectifyProperties'
+    -- IsHidden below, shown only when Enable_QDC_Lighting=Yes.
+    --
+    -- CAUTION: a single apostrophe inside any Description/PrettyName/Legend/
+    -- Text string passed to Q-SYS as control schema silently drops every
+    -- control on every page of the component at design time, with no error
+    -- message -- the component still appears in the design but is empty.
+    -- Apostrophes inside Lua comments are always safe. Check every schema
+    -- string in this file before adding one anywhere.
+    --
+    -- Min=1 (not 2): Zone 1/2 are fixed by the eCNA as "House"/"Stage", but
+    -- nothing requires an installation to use both, so a single-zone
+    -- (House-only) site can be configured that way. See the runtime comment
+    -- near qdcZones/qdcChannels for the Count==1 control-array handling
+    -- this relies on.
     { Name="QDC_Zones",    Type="integer", Min=1, Max=16, Value=2 },
     { Name="QDC_Channels", Type="integer", Min=1, Max=16, Value=2 },
   }
@@ -266,10 +225,9 @@ function GetProperties(props)
 end
 
 function RectifyProperties(props)
-  -- v1.2.1.49: show QDC_Zones/QDC_Channels only when QDC lighting is
-  -- actually enabled -- see the GetProperties comment above for why this
-  -- was safe to re-enable now (isolated from every other change, zero
-  -- apostrophes in any schema string in this file).
+  -- Show QDC_Zones/QDC_Channels only when QDC lighting is enabled -- see
+  -- the apostrophe caution in GetProperties above before editing any
+  -- schema string in this file.
   if props["Enable_QDC_Lighting"] then
     local qdcOn = props["Enable_QDC_Lighting"].Value == true
     if props["QDC_Zones"]    then props["QDC_Zones"].IsHidden    = not qdcOn end
@@ -318,12 +276,9 @@ function GetControlLayout(props)
   local enableQDC, qZones, qChannels = qdcConfig(props)
 
   local LX  = 10    -- left margin
-  -- v1.2.0.41: widened from 540 to fit the new Offset step (-/+) buttons on
-  -- the Dimmer Control page, to the right of the Offset % text readout.
-  -- Shared across all pages for a consistent look (widens header bars/
-  -- warning-text wrapping slightly elsewhere too, but doesn't move or
-  -- rearrange any other page's actual controls, which are all positioned
-  -- at fixed offsets from LX).
+  -- Sized to fit the Offset step (-/+) buttons to the right of the Offset %
+  -- readout on the Dimmer Control page; shared across all pages for a
+  -- consistent look.
   local W   = 630   -- page width
   local FX  = 130   -- field/control start x
 
@@ -341,19 +296,18 @@ function GetControlLayout(props)
     table.insert(graphics, { Type="Label", Text=text, Position={x, y}, Size={w, size or 14},
       HTextAlign=align or "Left", FontSize=size and math.floor(size*0.75) or 11 })
   end
-  -- v1.2.0.48 BUG FIX: a control declared with Count=1 is NOT an array on
-  -- the Q-SYS side -- its layout key must be the bare control Name, with no
-  -- " 1" suffix (confirmed against QSC's own "Building a Plugin" debug-pin
-  -- example: Count=1 paired with layout["code"], never layout["code 1"]).
-  -- Every layout[Name.." "..i] built below for a control whose real Count
-  -- can be exactly 1 -- Zone_Name/Zone_Offset*/Channel_* (QDC_Zones and
-  -- QDC_Channels both now allow 1, see GetProperties) and Macros (Num_Macros
-  -- allows 0-50) -- has to go through this helper instead of building the
-  -- suffixed key directly, or the layout entry silently matches no real
-  -- control and the whole row/element just never appears. Controls whose
-  -- Count is always multiplied up to something >1 (Zone_Preset at
-  -- qZones*5, RDI at numRDI*16) or is a fixed literal (House_Lights,
-  -- Sound, Aux_Out, etc.) can never hit this and don't need it.
+  -- A control declared with Count=1 is not an array on the Q-SYS side --
+  -- its layout key must be the bare control Name, with no " 1" suffix
+  -- (confirmed against QSC's own "Building a Plugin" debug-pin example:
+  -- Count=1 pairs with layout["code"], never layout["code 1"]). Any control
+  -- whose real Count can be exactly 1 -- Zone_Name/Zone_Offset*/Channel_*
+  -- (QDC_Zones/QDC_Channels both allow 1) and Macros (Num_Macros allows
+  -- 0-50) -- must go through this helper rather than building the suffixed
+  -- key directly, or the layout entry silently matches no real control and
+  -- the row/element never appears. Controls whose Count is always
+  -- multiplied to something >1 (Zone_Preset at qZones*5, RDI at
+  -- numRDI*16) or is a fixed literal (House_Lights, Sound, Aux_Out, etc.)
+  -- never hit this case and don't need it.
   local function layoutKey(name, count, idx)
     if count == 1 then return name else return name.." "..idx end
   end
@@ -562,15 +516,12 @@ function GetControlLayout(props)
     local offTxtX   = faderX + faderW + 6
     local offTxtW   = 40
     local rowH      = 26
-    -- v1.2.0.41: -/+ step buttons, placed to the right of the Offset % text
-    -- readout (not beside the fader itself) with a deliberate gap -- so
-    -- someone dragging the slider has no chance of also catching a step
-    -- button by accident. Sized to match the preset buttons exactly
-    -- (stepBW == presetBW) rather than a smaller custom width -- Q-SYS
-    -- auto-fits a button's Legend text to its own size, so the "+"/"-"
-    -- looking noticeably smaller than "Up"/"Down"/etc. was really just a
-    -- side effect of the button itself being smaller, not a separate font
-    -- setting to adjust.
+    -- -/+ step buttons sit to the right of the Offset % text readout (not
+    -- beside the fader itself) with a deliberate gap, so dragging the
+    -- slider can't accidentally catch a step button. Sized to match the
+    -- preset buttons (stepBW == presetBW) rather than a smaller custom
+    -- width, since Q-SYS auto-fits a button's Legend text to its own size
+    -- -- a smaller button would make "+"/"-" render smaller too.
     local stepBW    = presetBW
     local decX      = offTxtX + offTxtW + 10
     local incX      = decX + stepBW + 6
@@ -589,9 +540,8 @@ function GetControlLayout(props)
       end
       -- Color must be an RGB table, not a string -- confirmed against a
       -- working reference plugin (DSS_Server) and verified on both
-      -- Windows 10 and 11. Every earlier attempt here used a string
-      -- ("blue", "Blue", a hex string), which was simply the wrong data
-      -- type -- not a Designer-version quirk as previously suspected.
+      -- Windows 10 and 11. A string value here ("blue", "Blue", a hex
+      -- string) is simply the wrong data type and will not render.
       layout[layoutKey("Zone_Offset", qZones, i)]      = { PrettyName="Dimmer Control~Zone "..i.." Offset",      Style="Fader", Orientation="Horizontal", Color={72,147,217}, Min=-100, Max=100, Position={faderX, y}, Size={faderW, rowH-4} }
       layout[layoutKey("Zone_Offset_Text", qZones, i)] = { PrettyName="Dimmer Control~Zone "..i.." Offset Text", Style="Text", Position={offTxtX, y}, Size={offTxtW, rowH-4} }
       -- ButtonStyle="Momentary" to match the Momentary ControlType declared
@@ -784,11 +734,6 @@ function GetControlLayout(props)
     end
   end
 
-  -- (The Debug tab that lived here -- Last TX/RX/Error text fields -- was
-  -- removed entirely in v1.2.0.21. Everything it showed was already
-  -- duplicated to the Q-SYS Debug window via dbg()/print(), which remains
-  -- fully active; that's the actual troubleshooting tool in practice.)
-
   return layout, graphics
 end
 
@@ -800,60 +745,46 @@ if Controls then
 
   -- ── Configuration ──────────────────────────────────────────
   local TCP_PORT    = 13002  -- default port; overridden by Setup page TCP Port field
-  -- v1.2.0.45: no longer a user property (see GetProperties) -- fixed
-  -- internal CAI keep-alive cadence. Manual-confirmed purpose (page 89,
-  -- item 1): a CAI channel idle past 60s isn't itself dropped, but becomes
-  -- vulnerable to being bumped if a second client tries to connect while
-  -- it's idle. 45s keeps periodic traffic flowing with 15s of margin under
-  -- that 60s window -- not something an installer has any reason to tune.
+  -- Fixed internal CAI keep-alive cadence, not a user property. Per the eCNA
+  -- manual (page 89, item 1), a CAI channel idle past 60s isn't dropped
+  -- outright but becomes vulnerable to being bumped if a second client
+  -- tries to connect while it's idle. 45s keeps periodic traffic flowing
+  -- with 15s of margin under that 60s window.
   local POLL_RATE   = 45
   -- Use property values; fall back to defaults if not set
   local SCRAPE_RATE = (Properties["Scrape_Interval"] and Properties["Scrape_Interval"].Value or 2)
-  -- v1.2.0.41: dimmer LIGHTPOLL's own decoupled cadence (see GetProperties
-  -- comment). lightPollEveryNTicks converts that into "every Nth routine
-  -- turn" since the plugin only reasons in turns/ticks (no wall-clock query
-  -- available), same style as meterTimer's fixed-step MTICK simulation
-  -- elsewhere in this file. Rounds to the nearest whole tick, floored at 2.
-  --
-  -- v1.2.0.44 BUG FIX: this was floored at 1, not 2. Whenever LIGHTPOLL_RATE
-  -- rounded down to exactly 1 tick (e.g. LightPoll_Interval=3 with
-  -- Scrape_Interval anywhere above 2.0 up to 6.0 -- 3/2.1=1.43, rounds to
-  -- 1), httpRequest()'s "routineTicks >= lightPollEveryNTicks" check was
-  -- satisfied on EVERY single routine tick (routineTicks increments from 0
-  -- to 1 before the check), so LIGHTPOLL won every turn and scrape NEVER
-  -- ran at all -- confirmed via a field debug log showing 168 consecutive
-  -- LIGHTPOLL requests, zero SCRAPE requests, and Status stuck on
-  -- "Initializing" forever (populated.scrape can never become true, so
-  -- checkFullyPopulated() can never succeed). Flooring at 2 guarantees
-  -- scrape at least every-other-tick no matter how close the two intervals
-  -- are -- the tightest quantization the single-connection/one-request-
-  -- per-tick design can represent while still letting scrape run at all,
-  -- consistent with scrape always being the higher-priority default action.
+  -- Converts LightPoll_Interval into "every Nth routine turn," since the
+  -- plugin only reasons in turns/ticks (no wall-clock query available),
+  -- same style as meterTimer's fixed-step MTICK simulation elsewhere in
+  -- this file. Rounds to the nearest whole tick, floored at 2 rather than 1:
+  -- if this were allowed to floor at 1, any Scrape_Interval/LightPoll_Interval
+  -- combination that rounds the ratio down to exactly 1 tick would satisfy
+  -- httpRequest()'s "routineTicks >= lightPollEveryNTicks" check on every
+  -- single tick, so LIGHTPOLL would win every turn and scrape would never
+  -- run at all (populated.scrape could then never become true, so
+  -- checkFullyPopulated() could never succeed and Status would stay on
+  -- "Initializing" indefinitely). Flooring at 2 guarantees scrape runs at
+  -- least every other tick regardless of how close the two intervals are,
+  -- consistent with scrape being the higher-priority default action.
   local LIGHTPOLL_RATE = (Properties["LightPoll_Interval"] and Properties["LightPoll_Interval"].Value or 3)
   local lightPollEveryNTicks = math.max(2, math.floor(LIGHTPOLL_RATE / SCRAPE_RATE + 0.5))
-  -- v1.2.0.4: periodic name auto-refresh removed entirely. Names (input,
-  -- output, and dimmer zone/channel setup) are fetched once on connect and
-  -- otherwise only via their manual Refresh buttons -- they essentially
-  -- never change after commissioning, so spending any recurring poll slot
-  -- on them was pure overhead competing with the flag scrape / light poll.
+  -- No periodic name auto-refresh: input/output names and dimmer zone/
+  -- channel setup are fetched once on connect and otherwise only via their
+  -- manual Refresh buttons, since they essentially never change after
+  -- commissioning and would otherwise compete with the flag scrape/light
+  -- poll for a recurring poll slot.
   local ENABLE_QDC   = Properties["Enable_QDC_Lighting"] and Properties["Enable_QDC_Lighting"].Value or false
   local qdcZones     = ENABLE_QDC and (Properties["QDC_Zones"]    and Properties["QDC_Zones"].Value    or 2) or 0
   local qdcChannels  = ENABLE_QDC and (Properties["QDC_Channels"] and Properties["QDC_Channels"].Value or 2) or 0
 
-  -- v1.2.0.47 BUG FIX: Q-SYS hands back a Count=1 control as the control
-  -- itself (Controls.Foo), not a 1-element array (Controls.Foo[1] does not
-  -- exist) -- every OTHER control declared with a variable Count only ever
-  -- got exercised at Count>1 in this plugin, so this never surfaced until
-  -- Steve found that QDC_Channels=1 (always allowed, Min=1) left every
-  -- channel meter blank: every [j] index into Controls.Channel_Level etc.
-  -- was silently indexing into the control object itself rather than an
-  -- array, finding nothing there. QDC_Zones couldn't hit the same bug
-  -- before this build only because its own Min was 2 -- see the
-  -- GetProperties comment for why that's being relaxed to 1 in the same
-  -- build. Normalizing here, once, up front, means every other place in
-  -- this file that does Controls.Channel_Level[j] / Controls.Zone_Offset[i]
-  -- / etc. keeps working exactly as written, regardless of whether the
-  -- count is 1.
+  -- Q-SYS hands back a Count=1 control as the control itself (Controls.Foo),
+  -- not a 1-element array -- Controls.Foo[1] does not exist in that case.
+  -- Since QDC_Zones/QDC_Channels both allow Min=1, indexing
+  -- Controls.Channel_Level[j] / Controls.Zone_Offset[i] / etc. elsewhere in
+  -- this file would otherwise silently index into the control object
+  -- itself and find nothing there whenever a zone/channel count is exactly
+  -- 1. Normalizing here, once, up front, means every other place in this
+  -- file can keep indexing these controls as arrays unconditionally.
   local function normalizeSingleControl(name, count)
     if count == 1 and Controls[name] then
       Controls[name] = { Controls[name] }
@@ -870,14 +801,10 @@ if Controls then
     normalizeSingleControl("Channel_Zone",       qdcChannels)
     normalizeSingleControl("Channel_Present",    qdcChannels)
   end
-  -- v1.2.0.48: same Count=1 gotcha, same fix -- Num_Macros allows 0-50, so
-  -- a single-macro design is just as reachable as single-zone/single-
-  -- channel. Without this, Controls.Macros at Num_Macros=1 would be the
-  -- bare control rather than a 1-element array, and the
-  -- "ipairs(Controls.Macros)" wiring loop below would silently iterate
-  -- zero times -- the button would be visible (once the matching
-  -- GetControlLayout key fix takes effect) but would never actually do
-  -- anything when pressed.
+  -- Same Count=1 case applies to Macros: Num_Macros allows 0-50, so a
+  -- single-macro design is just as reachable as single-zone/single-channel,
+  -- and without this the "ipairs(Controls.Macros)" wiring loop below would
+  -- silently iterate zero times.
   normalizeSingleControl("Macros", (Properties["Num_Macros"] and Properties["Num_Macros"].Value or 50))
 
   -- ── Flag name tables (used to initialise LED legends) ──────
@@ -900,26 +827,25 @@ if Controls then
   local sock         = TcpSocket.New()  -- CAI TCP connection (port 13002)
   local pollTimer    = Timer.New()      -- Fires RST poll at POLL_RATE seconds
   local reconnectTmr = Timer.New()      -- Fires reconnect attempt after disconnect
-  local meterTimer   = nil              -- forward decl; assigned via Timer.New() below only if ENABLE_QDC. MUST live at this persistent scope, not inside "if ENABLE_QDC then" -- a Timer.New() declared as a `local` fully inside that block has no reference from outside it once the block finishes executing, and despite its EventHandler self-referencing it (a closure cycle), an object unreachable from any persistent root can still be garbage collected. That was very likely why the meter animation went choppy/stopped ticking in the field: the timer was probably being collected shortly after creation instead of running for the plugin's whole lifetime like pollTimer/reconnectTmr/scrapeTimer do.
+  local meterTimer   = nil              -- forward decl; assigned via Timer.New() below only if ENABLE_QDC. Must live at this persistent scope, not inside "if ENABLE_QDC then" -- a Timer.New() declared as a `local` fully inside that block has no reference from outside it once the block finishes executing, and despite its EventHandler self-referencing it (a closure cycle), an object unreachable from any persistent root can still be garbage collected, stopping the timer instead of letting it run for the plugin's whole lifetime like pollTimer/reconnectTmr/scrapeTimer do.
   local rxBuf        = ""      -- Receive buffer for incoming CAI data
   local isConnected  = false   -- True when CAI TCP socket is connected
   local connecting        = false  -- true from the moment doConnect() actually calls sock:Connect() until Connected/Closed/Error resolves it; also used by the 10s failsafe below
   local connectingGen     = 0      -- bumped on every connect() call; debounces the whole disconnect-cooldown-reconnect sequence so rapid repeated calls collapse into one attempt (see connect()), and also invalidates a stale 10s failsafe timeout once a newer attempt has started
   local cooldownPending   = false  -- true from the moment a disconnect-then-reconnect cooldown is scheduled until doConnect() actually runs (whether it proceeds or stands down). Needed because between "we disconnected" and "we reconnect", isConnected and connecting are BOTH false -- without this, a second connect() call arriving in that window looks identical to "nothing in progress" and would skip the cooldown entirely.
   local intentionalDisconnect = false  -- true only for the brief window between connect()'s own deliberate sock:Disconnect() and the Closed event it causes; lets that event be correctly classified as expected teardown, not a fault
-  -- v1.2.0.32: true from the moment we've reacted to an unexpected
-  -- disconnect (Fault status set, reconnectTmr:Start(5) scheduled) until
-  -- the NEXT connect() attempt actually begins (doConnect() calling
-  -- sock:Connect()). Guards against a single failed connection attempt
-  -- generating more than one terminal Closed/Reconnect/Error notification
-  -- -- observed in the field against a genuinely unreachable IP: the raw
-  -- socket layer can report failure more than once for what is, from our
-  -- perspective, the same outstanding attempt (e.g. an initial low-level
-  -- error followed later by a formal socket-closed notification). Without
-  -- this guard, each of those redundant notifications re-logged Fault and
-  -- restarted the 5s countdown from scratch, so the actual retry kept
-  -- getting pushed further out and Status flapped Initializing/Disconnected
-  -- unpredictably instead of retrying on a clean, predictable cadence.
+  -- True from the moment we've reacted to an unexpected disconnect (Fault
+  -- status set, reconnectTmr:Start(5) scheduled) until the next connect()
+  -- attempt actually begins (doConnect() calling sock:Connect()). Guards
+  -- against a single failed connection attempt generating more than one
+  -- terminal Closed/Reconnect/Error notification -- against a genuinely
+  -- unreachable IP, the raw socket layer can report failure more than once
+  -- for what is, from our perspective, the same outstanding attempt (e.g.
+  -- an initial low-level error followed later by a formal socket-closed
+  -- notification). Without this guard, each redundant notification
+  -- re-logs Fault and restarts the 5s countdown from scratch, pushing the
+  -- actual retry further out and making Status flap Initializing/
+  -- Disconnected unpredictably instead of retrying on a clean cadence.
   local reconnectScheduled = false
 
   -- ── QDC-400 Dimmer Lighting state (v1.2) ────────────────────
@@ -937,13 +863,12 @@ if Controls then
   local channelZone       = {}    -- channelZone[1..qdcChannels] = 0-based rtLights.xml zone index, or -1 if unassigned
   local currentReqType    = "SCRAPE" -- "SCRAPE" | "LIGHTPOLL" | "NAME" | "LIGHTCMD" -- routes the HTTP response to the right parser
   local currentApplyFn    = nil      -- used only when currentReqType == "NAME"
-  -- v1.2.0.41 (see httpRequest() below): replaces the old lightsPollToggle.
-  -- Scrape is now the default action on every routine turn; the dimmer
-  -- LIGHTPOLL only steals a turn once its own decoupled interval elapses,
-  -- tracked as a tick count (see routineTicks/lightPollEveryNTicks near
-  -- httpRequest).
+  -- Scrape is the default action on every routine turn (see httpRequest()
+  -- below); the dimmer LIGHTPOLL only steals a turn once its own decoupled
+  -- interval elapses, tracked as a tick count (see routineTicks/
+  -- lightPollEveryNTicks near httpRequest).
 
-  -- Optimistic-UI masking (v1.2.0.2): while a user-initiated zone change is
+  -- Optimistic-UI masking: while a user-initiated zone change is
   -- in flight, the eCNA's rtLights.xml poll can still echo back the OLD
   -- level for a cycle or two (single shared HTTP connection = latency).
   -- Without masking this makes the offset slider visibly crawl/overshoot
@@ -961,7 +886,7 @@ if Controls then
   local presetTarget   = {} -- presetTarget[zone]   = preset state (0-4) we're waiting to see echoed back
   local presetGen      = {} -- presetGen[zone]      = generation counter; invalidates stale 15s timeouts
 
-  -- ── Local dimmer meter simulation (v1.2.0.4) ────────────────
+  -- ── Local dimmer meter simulation ───────────────────────────
   -- The shared HTTP connection can only poll rtLights.xml every couple of
   -- seconds, which is far slower than a real dimmer fade (e.g. Mid1->Up in
   -- 2.5s per the configured level/fade-time). Rather than have the meter
@@ -979,19 +904,19 @@ if Controls then
   local channelAnimating   = {} -- channelAnimating[ch] = true while locally simulating (parseLights ignores live cact for this channel)
   local channelSimTarget   = {} -- channelSimTarget[ch] = level % the local simulation is ramping toward
   local channelSimRate     = {} -- channelSimRate[ch]   = %/second ramp rate (100 / configured fade seconds)
-  -- v1.2.0.41: must be declared here (before parseLights, below) rather
-  -- than alongside channelWaitZone/channelWaitKind further down -- parseLights
-  -- references channelPendingUnmask directly, and it's defined earlier in
-  -- the file than that later declaration block, so a `local` placed after
-  -- it would silently resolve to a global inside parseLights instead of the
-  -- intended upvalue. See the longer design comment near channelWaitZone.
+  -- Must be declared here (before parseLights, below) rather than alongside
+  -- channelWaitZone/channelWaitKind further down: parseLights references
+  -- channelPendingUnmask directly and is defined earlier in the file than
+  -- that later declaration block, so a `local` placed after it would
+  -- resolve to a global inside parseLights instead of the intended upvalue.
+  -- See the longer design comment near channelWaitZone.
   local channelInvolvesOffset = {} -- channelInvolvesOffset[ch] = true if this channel's current/most recent transition had a non-zero offset at either end
   local channelPendingUnmask  = {} -- channelPendingUnmask[ch] = true for exactly one parseLights pass: local ramp + zone flag(s) are done, but this next poll is still skipped; cleared (and channelAnimating unmasked) after that one pass
   local startChannelAnim   = nil -- forward decl; defined near queueLightCmd/parseLights
   local animatePresetChange = nil -- forward decl; defined near startChannelAnim (preset button transitions -- uses the preset's configured fade time)
   local animateOffsetChange = nil -- forward decl; defined near startChannelAnim (offset slider/text changes -- always OFFSET_FADE_SECONDS, regardless of active preset)
 
-  -- ── Dimmer-presence detection (v1.2.0.7) ────────────────────
+  -- ── Dimmer-presence detection ────────────────────────────────
   -- Guards against the "meter ramps toward a computed target, poll shows
   -- real 0%, meter resets, ramps again, resets again" cycle when a channel
   -- has no physical dimmer connected (or it's unpowered) -- our LUT-based
@@ -1097,26 +1022,22 @@ if Controls then
     setStatus(STATUS_OK, "OK")
   end
 
-  -- v1.2.0.32: split in two. CAI (RID/RST) and HTTP (names, dimmer setup,
-  -- LIN scan, scrape, light poll) are independent channels/sockets --
+  -- CAI (RID/RST) and HTTP (names, dimmer setup, LIN scan, scrape, light
+  -- poll) are independent channels/sockets, tracked and reset separately --
   -- a hiccup on one doesn't mean the other's already-fresh data is now
-  -- suspect. Previously a single resetPopulationTracking() wiped BOTH on
-  -- every connect() call, including the CAI side's own automatic retries.
-  -- Field-observed consequence: an eCNA still finishing its own boot
-  -- rejects the first couple of CAI sessions with "Resource Unavailable"
-  -- while its HTTP interface is already up and successfully answering --
-  -- each rejected CAI attempt was discarding HTTP-side progress that had
-  -- JUST succeeded moments earlier, forcing the full Setup.xml/rtLin.xml
-  -- sequence to restart from scratch over the single shared HTTP
-  -- connection every time, repeatedly, and pushing "OK" out by tens of
-  -- seconds even though the unit had clearly been responding the whole
-  -- time. Now a CAI-only reconnect (button, IP unchanged, automatic retry)
-  -- only re-earns the CAI side; HTTP-side freshness only resets on an
-  -- actual target change (resetForNewTarget, i.e. IP_ADDRESS changed --
-  -- see below), since that's the only event that actually invalidates
+  -- suspect. This matters because an eCNA still finishing its own boot can
+  -- reject the first couple of CAI sessions with "Resource Unavailable"
+  -- while its HTTP interface is already up and answering; if a CAI-only
+  -- reconnect also invalidated HTTP-side freshness, the full Setup.xml/
+  -- rtLin.xml sequence would have to restart from scratch over the single
+  -- shared HTTP connection on every retry, pushing "OK" out by tens of
+  -- seconds even though HTTP had been responding the whole time. A
+  -- CAI-only reconnect (button, IP unchanged, automatic retry) only
+  -- re-earns the CAI side; HTTP-side freshness only resets on an actual
+  -- target change (resetForNewTarget, i.e. IP_ADDRESS changed -- see
+  -- below), since that's the only event that actually invalidates
   -- previously-fetched HTTP data. "OK" still requires every source fresh
-  -- from ITS OWN channel's most recent (re)connection -- this only changes
-  -- which events count as invalidating which half.
+  -- from its own channel's most recent (re)connection.
   local function resetCaiPopulationTracking()
     populated.rid = false; populated.rst = false
     statusIsOK = false
@@ -1134,11 +1055,10 @@ if Controls then
     resetHttpPopulationTracking()
   end
 
-  -- v1.2.0.42/43 (Steve's design): three-tier trust model for the 4 Digital
-  -- Projector buttons (Dig1_Power/Dig1_Video/Dig2_Power/Dig2_Video).
-  -- DP1ON/DP1OFF/DV1ON/DV1OFF/DP2ON/DP2OFF/DV2ON/DV2OFF are the only output
-  -- changes with a dedicated unsolicited RPT,EVT code (confirmed against
-  -- the manual's full event list -- Slide/Aux Projector has none, so it
+  -- Three-tier trust model for the 4 Digital Projector buttons
+  -- (Dig1_Power/Dig1_Video/Dig2_Power/Dig2_Video). DP1ON/DP1OFF/DV1ON/
+  -- DV1OFF/DP2ON/DP2OFF/DV2ON/DV2OFF are the only output changes with a
+  -- dedicated unsolicited RPT,EVT code (Slide/Aux Projector has none, so it
   -- stays scrape-only, untouched by all of this).
   --
   --   Tier 1 (fastest): the unsolicited RPT,EVT notification itself sets
@@ -1147,19 +1067,17 @@ if Controls then
   --
   --   Tier 2 (first backstop): parseRPTEVT already triggers a reactive RST
   --   re-poll ~0.2s after the event; its response's D1P/D1V/D2P/D2V output-
-  --   status fields (previously discarded entirely) now also set these 4
-  --   buttons directly -- see parseStatusRecord below -- confirming/
-  --   correcting Tier 1's guess almost immediately.
+  --   status fields also set these 4 buttons directly -- see
+  --   parseStatusRecord below -- confirming/correcting Tier 1's guess
+  --   almost immediately.
   --
-  --   Tier 3 (second backstop): per Steve, "I would tend to let Scrape
-  --   'fix' a DV status if we get two consecutive scrapes that differ from
-  --   what our state is showing." dpMismatch[1..4] tracks a per-button
-  --   streak of consecutive scrapes that disagree with the current value;
-  --   a single differing scrape is treated as a possible stale/
-  --   transitional read and ignored, but two in a row overrides (see
-  --   scrape() below). Both Tier 1 and Tier 2 reset the relevant counter to
-  --   0, since a fresh assertion makes any prior streak against the OLD
-  --   value no longer meaningful.
+  --   Tier 3 (second backstop): dpMismatch[1..4] tracks a per-button streak
+  --   of consecutive scrapes that disagree with the current value; a
+  --   single differing scrape is treated as a possible stale/transitional
+  --   read and ignored, but two in a row overrides (see scrape() below).
+  --   Both Tier 1 and Tier 2 reset the relevant counter to 0, since a fresh
+  --   assertion makes any prior streak against the old value no longer
+  --   meaningful.
   --
   -- Declared here (not down near scrape() where it's also used) because
   -- parseStatusRecord is defined earlier in the file and references it as
@@ -1179,13 +1097,13 @@ if Controls then
     Controls.Control_State.String    = f[6]  or ""
     Controls.Stopped_State.String    = f[7]  or ""
     Controls.Cue_Number.String       = f[8]  or ""
-    -- v1.2.0.42: RST's own Digital Projector Power/Video OUTPUT STATUS
-    -- fields (codes 6/8/10/12 of the status record -- the "actual" state,
-    -- not the "desired" control-flag field right before each) -- comma
-    -- positions f[10]/f[12]/f[14]/f[16]. Guarded on record length since
-    -- these sit well past the minimum-6 check above. Any RST response
-    -- (periodic, reactive, or the one-time post-connect poll) authoritatively
-    -- sets these 4 -- see scrape() for the mismatch-correction backstop.
+    -- RST's own Digital Projector Power/Video OUTPUT STATUS fields (codes
+    -- 6/8/10/12 of the status record -- the "actual" state, not the
+    -- "desired" control-flag field right before each) -- comma positions
+    -- f[10]/f[12]/f[14]/f[16]. Guarded on record length since these sit
+    -- well past the minimum-6 check above. Any RST response (periodic,
+    -- reactive, or the one-time post-connect poll) authoritatively sets
+    -- these 4 -- see scrape() for the mismatch-correction backstop.
     if #f >= 16 then
       Controls.Dig1_Power.Boolean = (f[10] == "D1P")
       Controls.Dig1_Video.Boolean = (f[12] == "D1V")
@@ -1223,18 +1141,16 @@ if Controls then
   -- Handles RPT,EVT messages sent by the eCNA without being polled
   -- Re-polls RST on state-changing events for immediate UI update
   --
-  -- v1.2.0.43 (Steve's design): for the 4 Digital Projector buttons, trust
-  -- the unsolicited event itself at face value the instant it arrives --
-  -- "I would think we should take an unsolicited response at face value."
-  -- This is as fast as it gets: no round trip at all, since the event is
-  -- the eCNA telling us what already happened. The reactive RST re-poll
-  -- below still fires exactly as before and is now the FIRST backstop
-  -- (confirms/corrects within ~0.2-0.4s if the event turns out to have been
-  -- stale or superseded); scrape's existing 2-consecutive-mismatch rule
-  -- (see scrape()) remains the SECOND backstop. Resetting dpMismatch here
-  -- too, same as parseStatusRecord -- a fresh face-value assertion is a new
-  -- baseline, so any prior scrape-disagreement streak against the OLD value
-  -- is no longer meaningful.
+  -- For the 4 Digital Projector buttons, trust the unsolicited event itself
+  -- at face value the instant it arrives: this is as fast as it gets, no
+  -- round trip at all, since the event is the eCNA telling us what already
+  -- happened. The reactive RST re-poll below still fires and is the first
+  -- backstop (confirms/corrects within ~0.2-0.4s if the event turns out to
+  -- have been stale or superseded); scrape's 2-consecutive-mismatch rule
+  -- (see scrape()) is the second backstop. Resetting dpMismatch here too,
+  -- same as parseStatusRecord -- a fresh face-value assertion is a new
+  -- baseline, so any prior scrape-disagreement streak against the old
+  -- value is no longer meaningful.
   local function parseRPTEVT(fields)
     local evt = fields[4] or ""
     dbg("RPT EVT: " .. evt)
@@ -1280,20 +1196,16 @@ if Controls then
     if evt == TcpSocket.Events.Connected then
       isConnected = true
       connecting  = false
-      -- v1.2.0.33: the raw TCP handshake succeeding doesn't mean we have
-      -- real, current data yet (RID/RST/names/etc. below still have to
-      -- arrive) -- but it IS genuine progress, and worth showing as such.
-      -- Previously Status could sit on a stale Fault message (e.g. "Connect
-      -- timed out" from several failed automatic retries) right up until
-      -- checkFullyPopulated() flipped it directly to "OK" -- looking like
-      -- the plugin had been stuck the whole time it was actually already
-      -- talking to the unit and pulling in real data. Guarded by
-      -- `not statusIsOK` so a redundant/spurious Connected notification
-      -- while already fully populated can't regress the display backwards.
-      -- If we lose the connection again before reaching OK, the normal
-      -- Closed/Error/Reconnect handling below (Fault + reconnectScheduled)
-      -- takes over exactly as it already does -- nothing else needed to
-      -- protect that case.
+      -- The raw TCP handshake succeeding doesn't mean we have real, current
+      -- data yet (RID/RST/names/etc. below still have to arrive), but it is
+      -- genuine progress worth showing as such, rather than leaving Status
+      -- on a stale Fault message (e.g. "Connect timed out" from a prior
+      -- failed retry) until checkFullyPopulated() flips it directly to
+      -- "OK". Guarded by `not statusIsOK` so a redundant/spurious Connected
+      -- notification while already fully populated can't regress the
+      -- display backwards. If the connection is lost again before reaching
+      -- OK, the normal Closed/Error/Reconnect handling below (Fault +
+      -- reconnectScheduled) takes over exactly as it already does.
       if not statusIsOK then
         setStatus(STATUS_INITIALIZING, "Initializing")
       end
@@ -1341,14 +1253,13 @@ if Controls then
         intentionalDisconnect = false
         dbg("Disconnected as part of our own reconnect -- not a fault")
       elseif reconnectScheduled then
-        -- v1.2.0.32: we already reacted to a failure for this outstanding
-        -- attempt (Fault logged, 5s retry already ticking) -- this is a
-        -- redundant terminal notification for that SAME failure, not a
-        -- fresh disconnect. Ignore it: re-logging Fault and restarting
-        -- reconnectTmr here would just push the actual retry further out
-        -- every time one of these arrives, which is exactly the
-        -- Initializing/Disconnected/Disconnected flapping seen in the
-        -- field against a genuinely unreachable IP.
+        -- Already reacted to a failure for this outstanding attempt (Fault
+        -- logged, 5s retry already ticking) -- this is a redundant terminal
+        -- notification for that same failure, not a fresh disconnect.
+        -- Ignore it: re-logging Fault and restarting reconnectTmr here
+        -- would just push the actual retry further out every time one of
+        -- these arrives, causing Status to flap Initializing/Disconnected
+        -- repeatedly against a genuinely unreachable IP.
         dbg("Redundant disconnect notification while a retry is already pending -- ignored")
       else
         reconnectScheduled = true
@@ -1371,32 +1282,29 @@ if Controls then
   -- ── Connect function ────────────────────────────────────────
   -- Initiates CAI TCP connection using current IP/port settings.
   --
-  -- v1.2.0.26: clearing the old `connecting` guard the instant the raw TCP
-  -- handshake completed (in the Connected handler) turned out to be too
-  -- narrow a window. Field testing showed two Reconnect presses ~90ms
-  -- apart: the first's TCP connect succeeded and immediately cleared the
-  -- guard, so the second press wasn't blocked -- it disconnected the
-  -- barely-established first connection and reconnected again, which the
-  -- eCNA rejected with "Resource Unavailable" because it hadn't yet fully
-  -- released the just-closed session. A generation counter debounces the
-  -- entire sequence instead: every connect() call bumps it, a fresh
-  -- attempt only actually fires after a short cooldown, and if a NEWER
-  -- connect() call arrives during that cooldown, the older one silently
-  -- stands down rather than racing it. Repeated rapid presses collapse
-  -- into a single attempt, timed from the last press.
-  -- v1.2.0.32: `isAutoRetry` distinguishes the automatic 5s-after-Fault
-  -- retry (called only from reconnectTmr.EventHandler) from every other
-  -- caller (initial startup, manual Reconnect button, IP change) -- all of
-  -- which pass nothing, i.e. isAutoRetry=false. Previously every single
-  -- call unconditionally flashed Status to "Initializing", including the
-  -- 2nd/3rd/50th automatic retry against a target that's been Faulted the
-  -- whole time -- misleadingly implying fresh progress on every cycle
-  -- rather than "still failing, still retrying." An automatic retry now
-  -- leaves Status showing whatever Fault/Missing state it already had
-  -- (still fully updated the instant something actually responds, via the
-  -- normal Connected/RST-populated path) -- "Initializing" is reserved for
-  -- attempts the operator actually initiated or that are happening for the
-  -- first time.
+  -- Clearing the `connecting` guard immediately when the raw TCP handshake
+  -- completes (in the Connected handler) is too narrow a window: two
+  -- reconnect requests arriving close together can otherwise both proceed,
+  -- with the second disconnecting a barely-established first connection
+  -- and reconnecting again -- which the eCNA can reject with "Resource
+  -- Unavailable" because it hasn't yet fully released the just-closed
+  -- session. A generation counter debounces the entire sequence instead:
+  -- every connect() call bumps it, a fresh attempt only actually fires
+  -- after a short cooldown, and if a newer connect() call arrives during
+  -- that cooldown, the older one silently stands down rather than racing
+  -- it. Repeated rapid calls collapse into a single attempt, timed from
+  -- the last one.
+  --
+  -- `isAutoRetry` distinguishes the automatic 5s-after-Fault retry (called
+  -- only from reconnectTmr.EventHandler) from every other caller (initial
+  -- startup, manual Reconnect button, IP change), which all pass nothing,
+  -- i.e. isAutoRetry=false. An automatic retry leaves Status showing
+  -- whatever Fault/Missing state it already had, rather than flashing
+  -- "Initializing" on every retry cycle against a target that's been
+  -- Faulted the whole time -- Status still updates fully the instant
+  -- something actually responds, via the normal Connected/RST-populated
+  -- path. "Initializing" is reserved for attempts the operator actually
+  -- initiated or that are happening for the first time.
   local function connect(isAutoRetry)
     local ip   = Controls.IP_ADDRESS.String
     local port = tonumber(Controls.TCP_PORT.String)
@@ -1408,9 +1316,9 @@ if Controls then
 
     connectingGen = connectingGen + 1
     local myGen = connectingGen
-    -- v1.2.0.32: CAI-side only -- see resetCaiPopulationTracking's comment.
-    -- A CAI reconnect (this function) doesn't invalidate already-fresh
-    -- HTTP-side data; only resetForNewTarget() (an actual IP change) does.
+    -- CAI-side only -- see resetCaiPopulationTracking's comment. A CAI
+    -- reconnect (this function) doesn't invalidate already-fresh HTTP-side
+    -- data; only resetForNewTarget() (an actual IP change) does.
     resetCaiPopulationTracking()
     if not isAutoRetry then
       setStatus(STATUS_INITIALIZING, "Initializing")
@@ -1427,18 +1335,13 @@ if Controls then
       reconnectScheduled = false  -- a fresh attempt is actually starting now -- the NEXT terminal event (whichever it is) is new information, not a redundant echo of the last failure
       Timer.CallAfter(function()
         if connecting and connectingGen == myGen then
-          -- v1.2.0.32: this used to only clear `connecting` -- which
-          -- prevented the flag from wrongly blocking some FUTURE connect()
-          -- call, but didn't itself do anything to actually retry. If the
-          -- raw socket layer never delivers a terminal Closed/Error event
-          -- at all for an unreachable address (the exact case this
-          -- failsafe exists for), nothing was left to un-stick the plugin
-          -- -- it would sit at "Initializing" indefinitely. Now treat a
-          -- 10s non-resolution the same as an unexpected disconnect: flag
-          -- Fault and schedule the normal 5s automatic retry, same path a
-          -- real Closed/Error event would take. Guarded by
-          -- `reconnectScheduled` like that path too, in case the real
-          -- terminal event arrives at nearly the same moment.
+          -- 10s failsafe: if the raw socket layer never delivers a
+          -- terminal Closed/Error event at all for an unreachable address,
+          -- treat a 10s non-resolution the same as an unexpected
+          -- disconnect -- flag Fault and schedule the normal 5s automatic
+          -- retry, the same path a real Closed/Error event would take.
+          -- Guarded by `reconnectScheduled` like that path too, in case
+          -- the real terminal event arrives at nearly the same moment.
           dbg("Connect attempt did not resolve within 10s, treating as failed")
           connecting = false
           isConnected = false
@@ -1470,10 +1373,10 @@ if Controls then
   -- as before) so the automatic retry gets the same re-entrancy guard,
   -- population-tracking reset, and status handling as every other
   -- reconnect path -- there's only one place connection attempts start now.
-  -- v1.2.0.32: passes isAutoRetry=true so Status keeps showing Fault/Missing
-  -- through repeated automatic retries instead of flashing back to
-  -- "Initializing" every 5 seconds against a target that's been unreachable
-  -- the whole time.
+  -- Passes isAutoRetry=true so Status keeps showing Fault/Missing through
+  -- repeated automatic retries instead of flashing back to "Initializing"
+  -- every 5 seconds against a target that's been unreachable the whole
+  -- time.
   reconnectTmr.EventHandler = function()
     reconnectTmr:Stop()
     connect(true)
@@ -1500,9 +1403,9 @@ if Controls then
   Controls.Reconnect.EventHandler = function() connect() end
 
   -- Single consolidated refresh: re-fetches everything that's normally
-  -- only fetched once at connect (v1.2.0.11 -- previously 4 separate
-  -- buttons across 3 pages). Queued in order at the FRONT of nameQueue so
-  -- it executes on the next few HTTP cycles ahead of routine traffic.
+  -- only fetched once at connect. Queued in order at the front of
+  -- nameQueue so it executes on the next few HTTP cycles ahead of routine
+  -- traffic.
   Controls.Refresh_Setup.EventHandler = function()
     local items = {
       {"/Setup.xml?PgIdx=75", applyInputNames},
@@ -1645,38 +1548,36 @@ if Controls then
         if ctl then
           ctl.EventHandler = function()
             for k = 1, 5 do Controls.Zone_Preset[base+k].Boolean = (k == b) end
-            -- v1.2.0.41: capture whatever offset was actually showing right
-            -- before beginPresetPending resets it to 0, so the one-extra-
-            -- poll-cycle settling guard knows this transition "started"
-            -- with a non-zero offset even though the target itself (offset
-            -- reset to 0 on a fresh preset selection) doesn't.
+            -- Capture whatever offset was actually showing right before
+            -- beginPresetPending resets it to 0, so the one-extra-poll-
+            -- cycle settling guard knows this transition "started" with a
+            -- non-zero offset even though the target itself (offset reset
+            -- to 0 on a fresh preset selection) doesn't.
             local priorOffset = Controls.Zone_Offset[i] and Controls.Zone_Offset[i].Value or 0
             beginPresetPending(i, ZonePresetState[b])  -- mask until eCNA confirms (or 15s), avoids visible flicker/reversion
             zoneCurrentPreset[i] = ZonePresetState[b]  -- remembered so a later offset-only change knows which preset level to combine with
-            -- v1.2.0.41 fix: a preset selection ALSO resets the zone's
-            -- offset to 0 (manual sec 5.9, mirrored above via
-            -- beginPresetPending -> beginOffsetPending(i, 0)) -- but until
-            -- now, zoneLastOffset[i] (the unified detection block's own
-            -- "last known offset" bookkeeping) was never updated here, only
-            -- zoneCurrentPreset was. zoneLastOffset only gets refreshed
-            -- inside that detection block itself, which stays fully gated
-            -- off while offsetPending is true -- so it remained stale at
-            -- whatever offset was active BEFORE this button press. The
-            -- very poll that finally confirms our command (clearing both
-            -- presetPending and offsetPending) runs that detection block
-            -- immediately afterward, in the SAME call -- sees the stale
-            -- prevOff no longer matches the real (now zero) offset, and
-            -- mistakes it for a fresh, independent offset-only change --
-            -- firing animateOffsetChange with applyCompensation=true, which
-            -- uses the fixed ~3s OFFSET_FADE_SECONDS (minus
-            -- DETECTION_LAG_COMPENSATION) instead of the PRESET's own,
-            -- typically much longer, configured fade for whatever distance
-            -- is left. Symptom: the meter starts out correctly on the
-            -- preset's own fade, then suddenly speeds up partway through.
-            -- Updating zoneLastOffset here, in step with zoneCurrentPreset,
-            -- means that once the real confirmation arrives, the detection
-            -- block sees no change at all (0 == 0) and stays quiet, exactly
-            -- as it already correctly does for the preset side.
+            -- A preset selection also resets the zone's offset to 0 (manual
+            -- sec 5.9, mirrored above via beginPresetPending ->
+            -- beginOffsetPending(i, 0)), so zoneLastOffset (the unified
+            -- detection block's own "last known offset" bookkeeping) must
+            -- be updated here too, in step with zoneCurrentPreset.
+            -- zoneLastOffset only gets refreshed inside that detection
+            -- block itself, which stays gated off while offsetPending is
+            -- true -- if it were left stale at the pre-press offset, the
+            -- poll that finally confirms this command (clearing both
+            -- presetPending and offsetPending) would run that detection
+            -- block immediately afterward, see the stale value no longer
+            -- match the real (now zero) offset, and mistake it for a
+            -- fresh, independent offset-only change -- firing
+            -- animateOffsetChange with applyCompensation=true, which uses
+            -- the fixed ~3s OFFSET_FADE_SECONDS instead of the preset's
+            -- own, typically much longer, configured fade for whatever
+            -- distance is left (the meter would start out correctly on the
+            -- preset's own fade, then suddenly speed up partway through).
+            -- Updating zoneLastOffset here means the detection block sees
+            -- no change at all (0 == 0) once confirmation arrives and
+            -- stays quiet, exactly as it already correctly does for the
+            -- preset side.
             zoneLastOffset[i] = 0
             animatePresetChange(i, ZonePresetState[b], 0, false, priorOffset)  -- offset resets to 0 on a fresh preset selection (manual §5.9); self-initiated, no detection-lag compensation needed
             queueLightCmd(i-1, ZonePresetState[b], 0, 0)  -- Level/Fader=0, mirrors the web page's preset buttons
@@ -1704,11 +1605,11 @@ if Controls then
           local v = math.floor(ctl.Value + 0.5)
           if Controls.Zone_Offset_Text[i] then Controls.Zone_Offset_Text[i].String = tostring(v) end
           beginOffsetPending(i, v)  -- masks immediately; re-armed (target + 15s failsafe) on every tick
-          -- v1.2.0.41: keep zoneLastOffset in step with our own optimistic
-          -- change, same reasoning as the preset button handler above --
-          -- otherwise the unified detection block, once offsetPending
-          -- finally clears, would compare the real (now-matching) offset
-          -- against this stale value and mistake it for a fresh change,
+          -- Keep zoneLastOffset in step with our own optimistic change,
+          -- same reasoning as the preset button handler above -- otherwise
+          -- the unified detection block, once offsetPending finally
+          -- clears, would compare the real (now-matching) offset against
+          -- this stale value and mistake it for a fresh change,
           -- re-triggering the animation with applyCompensation=true.
           zoneLastOffset[i] = v
           animateOffsetChange(i, v, false)  -- self-initiated (live drag preview), no detection-lag compensation needed
@@ -1737,7 +1638,7 @@ if Controls then
             Controls.Zone_Offset[i].Value = v
             ctl.String = tostring(v)
             beginOffsetPending(i, v)  -- mask until eCNA echoes back this exact value (or 15s)
-            zoneLastOffset[i] = v  -- v1.2.0.41: see the fader handler above -- avoids a stale-comparison false re-trigger once offsetPending clears
+            zoneLastOffset[i] = v  -- see the fader handler above -- avoids a stale-comparison false re-trigger once offsetPending clears
             animateOffsetChange(i, v, false)  -- self-initiated, no detection-lag compensation needed
             queueLightCmd(i-1, 5, v, 3)
           else
@@ -1748,7 +1649,7 @@ if Controls then
     end
   end
 
-  -- ── Offset step buttons (v1.2.0.41; debounced v1.2.0.46) ────────
+  -- ── Offset step buttons ──────────────────────────────────────
   -- Momentary Increase/Decrease buttons beside the Offset readout: a quick
   -- press/release nudges the offset by 1; holding past HOLD_DELAY begins
   -- repeating at 1 unit per HOLD_REPEAT seconds until released. Reuses the
@@ -1766,19 +1667,17 @@ if Controls then
     local function stepOffset(i, delta)
       local ctl = Controls.Zone_Offset[i]
       if not ctl then return end
-      -- v1.2.0.41 fix: Zone_Offset (a Knob/Fader control) stores Value as a
-      -- Lua float even when it's showing a whole number -- the fader itself
-      -- can be dragged to fractional positions, though nothing else in
-      -- this plugin ever intentionally sets a fractional offset. Reading
-      -- it raw and adding an integer delta (float + integer = float, per
-      -- Lua 5.3's arithmetic subtype rules) kept the result a float too, so
-      -- tostring(v) printed "6.0" instead of "6" -- until the next live
-      -- poll's tonumber(zofs[i]) (a plain integer string, no decimal point)
-      -- overwrote it with a genuine Lua integer and "corrected" the
-      -- display. Rounding here forces the integer subtype up front, same
-      -- as the fader/text handlers already do via math.floor(x + 0.5), so
-      -- every write to Zone_Offset_Text from a self-initiated change is a
-      -- clean integer string from the start.
+      -- Zone_Offset (a Knob/Fader control) stores Value as a Lua float even
+      -- when it's showing a whole number -- the fader itself can be
+      -- dragged to fractional positions, though nothing else in this
+      -- plugin ever intentionally sets a fractional offset. Reading it raw
+      -- and adding an integer delta (float + integer = float, per Lua
+      -- 5.3's arithmetic subtype rules) would keep the result a float too,
+      -- so tostring(v) would print "6.0" instead of "6". Rounding here
+      -- forces the integer subtype up front, same as the fader/text
+      -- handlers do via math.floor(x + 0.5), so every write to
+      -- Zone_Offset_Text from a self-initiated change is a clean integer
+      -- string from the start.
       local cur = math.floor((ctl.Value or 0) + 0.5)
       local v = cur + delta
       if v < -100 then v = -100 elseif v > 100 then v = 100 end
@@ -1786,27 +1685,19 @@ if Controls then
       ctl.Value = v
       if Controls.Zone_Offset_Text[i] then Controls.Zone_Offset_Text[i].String = tostring(v) end
       beginOffsetPending(i, v)   -- masks immediately; re-armed on every step, same as the fader drag
-      zoneLastOffset[i] = v      -- keep the unified-detection baseline in sync (v1.2.0.41 fix)
+      zoneLastOffset[i] = v      -- keep the unified-detection baseline in sync
       animateOffsetChange(i, v, false)  -- self-initiated, no detection-lag compensation
-      -- v1.2.0.46 fix: this used to call queueLightCmd() immediately on
-      -- every step, on the theory that each tap is "a deliberate discrete
-      -- action, not a continuous drag needing debounce." Field testing
-      -- showed otherwise: a fast burst of taps (or the HOLD_REPEAT
-      -- auto-repeat, one step per 0.5s) can generate commands faster than
-      -- httpRequest() drains them -- LIGHTCMD is serviced at most once per
-      -- HTTP round trip, roughly once per Scrape_Interval -- and
-      -- queueLightCmd's 4-deep cap (mirroring the eCNA's own command
-      -- buffer) silently drops anything past it, with no guarantee the
-      -- LAST tapped value is among the survivors. Net effect: rapidly
-      -- tapping to +10% could leave the real device short (e.g. 8%) while
-      -- our own local prediction still showed 10%, only correcting once a
-      -- later scrape caught the mismatch. Now debounced exactly like the
-      -- fader drag handler above, sharing its same offsetDebounceGen[i]
-      -- counter (both ultimately commit the same zone offset, so unifying
-      -- the debounce is correct regardless of which control last moved) --
-      -- only the final value, once input has been idle for 1s, is ever
-      -- sent. The local display/animation still updates instantly on every
-      -- tap; only the network commit waits.
+      -- Debounced exactly like the fader drag handler above, sharing its
+      -- offsetDebounceGen[i] counter (both ultimately commit the same zone
+      -- offset, so unifying the debounce is correct regardless of which
+      -- control last moved): a fast burst of taps, or the HOLD_REPEAT
+      -- auto-repeat, can generate commands faster than httpRequest() drains
+      -- them (LIGHTCMD is serviced at most once per HTTP round trip), and
+      -- queueLightCmd's 4-deep cap would otherwise silently drop values
+      -- with no guarantee the last tapped value survives. Only the final
+      -- value, once input has been idle for 1s, is ever sent to the
+      -- network; the local display/animation still updates instantly on
+      -- every tap.
       offsetDebounceGen[i] = (offsetDebounceGen[i] or 0) + 1
       local myGen = offsetDebounceGen[i]
       Timer.CallAfter(function()
@@ -1821,17 +1712,17 @@ if Controls then
       offsetStepGen[i][dir] = (offsetStepGen[i][dir] or 0) + 1
       local myGen = offsetStepGen[i][dir]
       offsetStepTimer[i] = offsetStepTimer[i] or {}
-      -- v1.2.0.41: always a FRESH Timer here, never reused across separate
-      -- press cycles. A stale scheduled fire from an earlier press (one
-      -- Timer:Stop() didn't manage to cancel before it fired -- can't
-      -- assume otherwise across every possible runtime) would otherwise
-      -- call whatever EventHandler is CURRENTLY assigned to a shared,
-      -- reused Timer object -- i.e. the latest closure, whose captured
-      -- myGen matches the CURRENT generation and so isn't recognized as
-      -- stale at all. A brand-new Timer per press means an old, abandoned
-      -- one's EventHandler closure is permanently fixed to the OLD myGen,
-      -- so the generation check above correctly catches it as stale
-      -- regardless of whether Stop() actually prevented it from firing.
+      -- Always a fresh Timer here, never reused across separate press
+      -- cycles: a stale scheduled fire from an earlier press (Timer:Stop()
+      -- can't be assumed to always cancel a fire already in flight) would
+      -- otherwise call whatever EventHandler is currently assigned to a
+      -- shared, reused Timer object -- i.e. the latest closure, whose
+      -- captured myGen matches the current generation and so isn't
+      -- recognized as stale at all. A brand-new Timer per press means an
+      -- old, abandoned one's EventHandler closure is permanently fixed to
+      -- the old myGen, so the generation check above correctly catches it
+      -- as stale regardless of whether Stop() actually prevented it from
+      -- firing.
       local t = Timer.New()
       offsetStepTimer[i][dir] = t
       stepOffset(i, delta)  -- immediate first step on press
@@ -1871,9 +1762,6 @@ if Controls then
       end
     end
   end
-
-  -- (Refresh_Dimmer_Setup and Refresh_LIN_Network consolidated into the
-  -- single Refresh_Setup handler above -- v1.2.0.11.)
 
   -- ── User-defined name tables ────────────────────────────────
   -- Fetched from eCNA on connect; fall back to default names if empty
@@ -2042,10 +1930,9 @@ if Controls then
     checkFullyPopulated()
   end
 
-  -- (v1.2.0.4: names -- input, output, and dimmer setup -- are fetched once
-  -- on connect and otherwise only via their manual Refresh buttons; no
-  -- periodic re-fetch. See the Connected handler above and the three
-  -- Refresh_*_Names button handlers below.)
+  -- Names -- input, output, and dimmer setup -- are fetched once on
+  -- connect and otherwise only via their manual Refresh buttons; no
+  -- periodic re-fetch. See the Connected handler above.
 
   -- ── Web Scrape via raw TCP HTTP/1.0 ─────────────────────────
   -- scrapeTimer is the sole reconnect driver (fires every SCRAPE_RATE seconds).
@@ -2071,37 +1958,18 @@ if Controls then
     dbg("HTTP GET " .. path)
   end
 
-  -- v1.2.0.41: scrape (/rtIoFDetail.xml) is the plugin's core purpose --
-  -- it's how preset changes and every other CAI-flag-driven indicator
-  -- (Inputs/Outputs pages, House/Stage fast-path) get detected, same as the
+  -- Scrape (/rtIoFDetail.xml) is the plugin's core purpose -- it's how
+  -- preset changes and every other CAI-flag-driven indicator (Inputs/
+  -- Outputs pages, House/Stage fast-path) get detected, same as the
   -- original script this plugin replaced.
   --
-  -- This build decouples the dimmer LIGHTPOLL from Scrape_Interval, after
-  -- two rounds of field experimentation (build 40 stayed untouched
-  -- throughout). The first attempt made scrape strictly alternate 1:1 with
-  -- an "other" turn (light commands/name fetches/dimmer poll) -- but field
-  -- logs (Scrape_Interval=1s) showed that barely moved real scrape cadence
-  -- versus the unmodified build, because scrapeTimer restarts fresh after
-  -- EVERY request regardless of type: real scrape-to-scrape gap was always
-  -- ~2x(Scrape_Interval + round-trip) whenever the dimmer LIGHTPOLL was
-  -- enabled, since it was consuming every other turn either way. Lowering
-  -- Scrape_Interval sped up scrape AND lightpoll together, never scrape
-  -- alone.
-  --
-  -- This version decouples them properly: LIGHTPOLL now runs on its OWN
-  -- slower cadence (LightPoll_Interval, tracked in routine "ticks" via
-  -- lightPollEveryNTicks -- see GetProperties/config comments) instead of
-  -- automatically claiming every other turn. Scrape is the DEFAULT action
-  -- every tick that nothing higher-priority claims, so Scrape_Interval now
-  -- controls real scrape cadence directly, exactly as Steve asked ("let
-  -- scrape have a real (or more real) setting"). Confirmed via field debug
-  -- logs: at Scrape_Interval=1/LightPoll_Interval=4, ticks land in a clean
-  -- SCRAPE,SCRAPE,SCRAPE,LIGHTPOLL repeating pattern (2/3 of scrape-to-
-  -- scrape gaps ~1.2-1.4s, the other 1/3 ~2.5-2.7s where a lightpoll sits in
-  -- between) -- a real improvement over the prior scheme's constant
-  -- ~2.5-2.7s. Steve found LightPoll_Interval=3 (vs. the default
-  -- Scrape_Interval of 2) a further, noticeable improvement, particularly
-  -- for offset-change responsiveness -- see GetProperties comment.
+  -- The dimmer LIGHTPOLL runs on its own slower cadence (LightPoll_Interval,
+  -- tracked in routine "ticks" via lightPollEveryNTicks -- see
+  -- GetProperties/config comments) rather than automatically claiming
+  -- every other turn. Scrape is the default action every tick that nothing
+  -- higher-priority claims, so Scrape_Interval controls real scrape cadence
+  -- directly -- lowering it does not also slow the dimmer poll down, and
+  -- vice versa.
   --
   -- Priority order per tick:
   --   1) lightCmdQueue (button/offset manual commands) -- immediate, always
@@ -2135,13 +2003,11 @@ if Controls then
     end
 
     -- The one-time initial population (input/output names, dimmer setup,
-    -- LIN scan -- queued in nameQueue right after Connected) keeps its
-    -- original top priority, ahead of scrape. Per Steve: "The initial
-    -- interaction to retrieve all of the information can take priority over
-    -- the scrape function. It is presumed that until we're done
-    -- initializing, nothing is correct yet." statusIsOK is false during
-    -- this window (and again briefly after a target change re-triggers
-    -- population), so this only engages during genuine (re)initialization.
+    -- LIN scan -- queued in nameQueue right after Connected) takes priority
+    -- over scrape: until it completes, nothing else is presumed correct
+    -- yet. statusIsOK is false during this window (and again briefly after
+    -- a target change re-triggers population), so this only engages during
+    -- genuine (re)initialization.
     if #nameQueue > 0 and not statusIsOK then
       local item = table.remove(nameQueue, 1)
       currentReqType = "NAME"
@@ -2164,10 +2030,9 @@ if Controls then
     routineTicks = routineTicks + 1
 
     -- Dimmer LIGHTPOLL: decoupled from scrape -- only takes a turn once its
-    -- OWN slower interval has elapsed, instead of automatically claiming
+    -- own slower interval has elapsed, instead of automatically claiming
     -- every other tick. Meter animation between real polls already masks
-    -- the slower refresh (per Steve: "we're already 'faking' the dimmer
-    -- meters with our animation").
+    -- the slower refresh.
     if ENABLE_QDC and routineTicks >= lightPollEveryNTicks then
       routineTicks = 0
       currentReqType = "LIGHTPOLL"
@@ -2216,9 +2081,6 @@ if Controls then
       return false
     end
 
-    -- (The Controls.Outputs mirror loop that lived here was removed in
-    -- v1.2.0.20 along with the Outputs control itself -- flagActive()
-    -- above already has everything scrape() needs.)
     for idx = 1, #Controls.Inputs do
       local a = false
       -- Input flags are offset by 3 from their InFlagNames index (per eCNA manual)
@@ -2239,28 +2101,27 @@ if Controls then
     elseif flagActive(9)  then setExclusive(Controls.Stage_Lights, 2)
     else                       setExclusive(Controls.Stage_Lights, 1) end
 
-    -- Fast-path dimmer animation trigger for House/Stage (v1.2.0.11): the
-    -- CAI I/O flags above are carried on /rtIoFDetail.xml, which is
-    -- prioritized to stay responsive (per explicit preference: flags
-    -- should never feel laggy, even if that means lighting is
-    -- comparatively worse). House and Stage happen to be the only two
-    -- zones with flag-level representation at all -- but they're also the
-    -- most commonly the ONLY active zones in practice (a QDC-400 board has
-    -- 4 channels, but real installs usually only populate 1-2 with actual
-    -- power modules). So for those two zones specifically, we don't have
-    -- to wait for the slower /rtLights.xml poll to notice a preset change
-    -- and start the local ramp -- this scrape (which is already running at
-    -- the fast, prioritized rate) can kick it off immediately.
+    -- Fast-path dimmer animation trigger for House/Stage: the CAI I/O flags
+    -- above are carried on /rtIoFDetail.xml, which is prioritized to stay
+    -- responsive -- flags should never feel laggy, even if that means
+    -- lighting is comparatively worse. House and Stage are the only two
+    -- zones with flag-level representation, but also the most commonly the
+    -- only active zones in practice (a QDC-400 board has 4 channels, but
+    -- real installs usually only populate 1-2 with actual power modules).
+    -- For those two zones specifically, this scrape (already running at
+    -- the fast, prioritized rate) can start the local ramp immediately
+    -- rather than waiting for the slower /rtLights.xml poll to notice a
+    -- preset change.
     --
-    -- This is DELIBERATELY decoupled from zoneCurrentPreset/animatePresetChange's
+    -- Deliberately decoupled from zoneCurrentPreset/animatePresetChange's
     -- authoritative bookkeeping: zoneFastPreset only ever triggers the
     -- animation early, and is never used for the offset-additive math (see
     -- animateOffsetChange) -- that stays governed exclusively by the
     -- full-fidelity rtLights.xml zsta poll, since Stage's flags can't
     -- distinguish Mid1/Mid2 from None (CAI only exposes Up/Down/None for
     -- Stage). A brief, self-correcting animation toward a possibly-wrong
-    -- guess is an acceptable trade per explicit preference for smooth over
-    -- momentarily-precise; the real rtLights.xml poll corrects it shortly after.
+    -- guess trades momentary precision for smoothness; the real
+    -- rtLights.xml poll corrects it shortly after.
     if ENABLE_QDC and Controls.Zone_Preset then
       local houseState
       if     flagActive(8) then houseState = 0  -- Up
@@ -2321,15 +2182,15 @@ if Controls then
       Controls.Aux_Out[i].Boolean = flagActive(28 + i)
     end
 
-    -- v1.2.0.42: Dig1/Dig2 Power+Video (flags 1-4) are now primarily driven
-    -- by RST (see parseStatusRecord/dpMismatch above) -- RST gets these
-    -- events near-instantly via the reactive DP/DV re-poll, whereas scrape
-    -- only refreshes on its own Scrape_Interval cadence. Scrape still acts
-    -- as a backstop: only override the current (RST-set) value once it's
-    -- disagreed for TWO CONSECUTIVE scrapes in a row -- a single differing
+    -- Dig1/Dig2 Power+Video (flags 1-4) are primarily driven by RST (see
+    -- parseStatusRecord/dpMismatch above) -- RST gets these events
+    -- near-instantly via the reactive DP/DV re-poll, whereas scrape only
+    -- refreshes on its own Scrape_Interval cadence. Scrape still acts as a
+    -- backstop: only override the current (RST-set) value once it's
+    -- disagreed for two consecutive scrapes in a row -- a single differing
     -- reading is treated as a possible stale/transitional echo, not yet a
-    -- correction (per Steve's explicit design). A fresh RST response resets
-    -- the streak back to 0 (see parseStatusRecord).
+    -- correction. A fresh RST response resets the streak back to 0 (see
+    -- parseStatusRecord).
     local function scrapeCorrectDP(idx, ctl)
       local newVal = flagActive(idx)
       if newVal == ctl.Boolean then
@@ -2355,7 +2216,7 @@ if Controls then
     checkFullyPopulated()
   end
 
-  -- ── QDC-400 Dimmer Lighting: rtLights.xml parser (v1.2) ─────────
+  -- ── QDC-400 Dimmer Lighting: rtLights.xml parser ────────────────
   -- Handles both the routine poll (/rtLights.xml, no params) and the
   -- response to a queued command (/rtLights.xml?Zone=...&State=...) --
   -- both return the identical <rtlights> status document, exactly like
@@ -2437,8 +2298,8 @@ if Controls then
           end
         end
 
-        -- v1.2.0.29: unified preset+offset change detection. Almost all
-        -- real-world changes originate at the eCNA itself (a cinema server
+        -- Unified preset+offset change detection. Almost all real-world
+        -- changes originate at the eCNA itself (a cinema server
         -- sends it a cue), not at this plugin -- we only find out via this
         -- poll. Skipped entirely while EITHER is still pending our own
         -- command (already animated optimistically at button-press/drag
@@ -2474,20 +2335,18 @@ if Controls then
       for j = 1, qdcChannels do
         local lvl = tonumber(cact[j]) or 0
 
-        -- v1.2.0.11: removed the "2 identical polls = settled, stop
-        -- simulating" check that was here. It caused exactly the jumpy
-        -- behavior it was meant to prevent: with multiple channels ramping
-        -- at once (or even a single channel), a transient/coincidental
-        -- repeated poll reading could trust a not-actually-final
-        -- intermediate value, snap the meter to it, and then jump again
-        -- once a later poll showed the real (different) reading -- "goes
-        -- higher then jumps low" / "pops down then pops back up". Per
-        -- explicit preference: smooth and eventually-accurate beats
-        -- momentarily-accurate and jumpy. The local ramp now runs to its
-        -- own computed completion every time, full stop -- the only thing
-        -- that still overrides it early is the no-dimmer detection just
-        -- below (2 consecutive UNEXPECTED 0% polls), which is a distinct,
-        -- narrower signal than "any 2 identical readings".
+        -- Deliberately does NOT treat "2 identical polls" as "settled,
+        -- stop simulating": with multiple channels ramping at once (or
+        -- even a single channel), a transient/coincidental repeated poll
+        -- reading could otherwise be trusted as a not-actually-final
+        -- intermediate value, snapping the meter to it and then jumping
+        -- again once a later poll shows the real, different reading.
+        -- Smooth and eventually-accurate beats momentarily-accurate and
+        -- jumpy, so the local ramp always runs to its own computed
+        -- completion. The only thing that still overrides it early is the
+        -- no-dimmer detection just below (2 consecutive unexpected 0%
+        -- polls), which is a distinct, narrower signal than "any 2
+        -- identical readings".
 
         -- While locally animating (see startChannelAnim), trust the
         -- simulation over the poll -- the poll is slower than a real fade
@@ -2501,9 +2360,9 @@ if Controls then
         -- here at ordinary polling cadence -- there's nothing to predict
         -- in that case, so a less-smooth appearance is expected/fine.
         if channelPendingUnmask[j] then
-          -- v1.2.0.41: one-extra-polling-cycle settling guard (Steve's
-          -- explicit request). The local ramp is done and the zone-level
-          -- pending flag(s) have genuinely cleared, but this transition
+          -- One-extra-polling-cycle settling guard. The local ramp is done
+          -- and the zone-level pending flag(s) have genuinely cleared, but
+          -- this transition
           -- involved a non-zero offset at the start or the new position --
           -- real hardware can ack the protocol-level state fields slightly
           -- ahead of the physical dimmer output actually settling to the
@@ -2590,20 +2449,19 @@ if Controls then
     if Controls.Zone_Offset_Text[zone] then Controls.Zone_Offset_Text[zone].String = "0" end
   end
 
-  -- ── Local dimmer meter simulation (v1.2.0.9) ────────────────
+  -- ── Local dimmer meter simulation ───────────────────────────
   -- Begin animating channel `ch` (1-based) from wherever it's currently
   -- displayed toward `target` (0-100%).
   --
-  -- Fade model, corrected from field measurement: `fadeSec` is the FULL
-  -- TRANSITION DURATION for going from whichever preset was active to the
-  -- one being selected now, regardless of how far apart their configured
-  -- levels are -- NOT a constant %/second rate as originally assumed.
-  -- Measured on the real hardware: Down(0%)->Up(100%) at a 10s configured
-  -- rate took ~10-11s, and separately Mid1(50%)->Up(75%) at the SAME 10s
-  -- rate ALSO took ~10-11s, even though that's a much shorter distance.
-  -- So the ramp's %/sec speed is `distance / fadeSec`, computed fresh for
-  -- every transition -- fast for a big jump, slow for a small one, but
-  -- both finishing in about the same configured duration.
+  -- Fade model: `fadeSec` is the full transition duration for going from
+  -- whichever preset was active to the one being selected now, regardless
+  -- of how far apart their configured levels are -- not a constant
+  -- %/second rate. On real hardware, Down(0%)->Up(100%) at a 10s
+  -- configured rate and Mid1(50%)->Up(75%) at the same 10s rate both take
+  -- about the same ~10-11s, even though the second is a much shorter
+  -- distance. So the ramp's %/sec speed is `distance / fadeSec`, computed
+  -- fresh for every transition -- fast for a big jump, slow for a small
+  -- one, but both finishing in about the same configured duration.
   --
   -- MTICK below steps channelSimLevel[ch] toward channelSimTarget[ch] at
   -- channelSimRate[ch] %/sec until it arrives, or until parseLights sees 2
@@ -2620,12 +2478,12 @@ if Controls then
   -- amount gets it finishing closer to when the real transition actually
   -- completes. This does not change anything sent to the eCNA -- it only
   -- affects how fast our local prediction moves.
-  local DETECTION_LAG_COMPENSATION = 2  -- seconds (raised from 1.5s after live-Core field testing showed it tracking well)
+  local DETECTION_LAG_COMPENSATION = 2  -- seconds; empirically tuned to track real device transitions well
   local channelSimLevel = {}  -- channelSimLevel[ch] = current simulated level (float), only meaningful while channelAnimating[ch]
-  -- v1.2.0.30: for a SELF-initiated change (button press, fader drag), the
-  -- eCNA hasn't actually made the change yet when our local animation
-  -- starts -- our own command still has to travel the shared connection,
-  -- possibly behind something already in flight. If the local animation's
+  -- For a self-initiated change (button press, fader drag), the eCNA
+  -- hasn't actually made the change yet when our local animation starts --
+  -- our own command still has to travel the shared connection, possibly
+  -- behind something already in flight. If the local animation's
   -- duration is shorter than that real round trip (most likely for the
   -- ~0.5s instant/None floor, but possible for any short fade), the
   -- channel unmasks and trusts live polling again before the eCNA has
@@ -2642,43 +2500,30 @@ if Controls then
   local channelWaitZone = {}  -- channelWaitZone[ch] = zone number to check, or nil (poll/flag-detected changes don't set this)
   local channelWaitKind = {}  -- channelWaitKind[ch] = "preset" or "offset" -- which pending flag to check for that zone
 
-  -- v1.2.0.41: two related fixes for Steve's report that the jump-to-old-
-  -- value symptom persists more broadly than the None-specific case, and
-  -- that a combined preset+offset change seemed to animate at the
-  -- offset's fixed rate instead of the preset's configured rate.
+  -- beginPresetPending always also resets the zone's offset to 0 (manual
+  -- sec 5.9), setting both presetPending[zone] and offsetPending[zone]
+  -- true. A preset-tagged channel wait (channelWaitKind[ch] == "preset")
+  -- must therefore require BOTH presetPending[zone] AND offsetPending[zone]
+  -- to clear before trusting live polls again, not just presetPending --
+  -- real hardware typically acks the preset state field (zsta) almost
+  -- immediately, well before the physical dimmer finishes its multi-second
+  -- fade and often before the offset has genuinely re-settled to 0, so
+  -- checking presetPending alone would unmask the channel while the offset
+  -- is still transitioning and let a stale cact reading pop the meter
+  -- back. See startChannelAnim's guard and meterTimer's stillPending check
+  -- below.
   --
-  -- The fade-rate question traced out as already correct in code (the
-  -- unified detection in parseLights already uses the preset's own fade
-  -- whenever the preset changes, even if the offset changes alongside it
-  -- -- confirmed via targeted reproduction). The broader jump-back,
-  -- though, is real: beginPresetPending ALWAYS also resets the zone's
-  -- offset to 0 (manual sec 5.9), setting BOTH presetPending[zone] AND
-  -- offsetPending[zone] true -- but a preset-tagged channel wait
-  -- (channelWaitKind[ch] == "preset") only ever checked presetPending,
-  -- never offsetPending. Real hardware typically acks the preset state
-  -- field (zsta) almost immediately -- well before the physical dimmer
-  -- finishes its multi-second fade, and often before the offset has
-  -- genuinely re-settled to 0 either. That let the channel unmask the
-  -- instant our own local ramp finished, even though offsetPending was
-  -- still genuinely pending -- the next poll's still-transitional cact
-  -- reading would flow straight through and pop the meter back.
-  --
-  -- Fix 1 (below, in startChannelAnim's guard and meterTimer's stillPending
-  -- check): for a "preset" wait, require BOTH presetPending[zone] AND
-  -- offsetPending[zone] to clear, not just presetPending -- matching what
-  -- beginPresetPending actually does.
-  --
-  -- Fix 2 (Steve's explicit follow-up request): even once both zone-level
-  -- flags genuinely clear and our own local ramp is done, don't trust the
-  -- very first live poll that arrives -- wait one more full polling cycle.
-  -- This absorbs the residual gap where the protocol-level state fields
-  -- confirm slightly ahead of the physical dimmer output actually
-  -- settling. Applies whenever the transition involved an offset, either
-  -- at the start (a non-zero offset was active/being cleared) or at the
-  -- new position (the target itself has a non-zero offset component) --
-  -- not to plain preset-to-preset moves with no offset in play at all,
-  -- which stay exactly as responsive as before. (channelInvolvesOffset and
-  -- channelPendingUnmask themselves are declared earlier, alongside
+  -- Even once both zone-level flags genuinely clear and the local ramp is
+  -- done, the very first live poll that arrives afterward is still not
+  -- trusted -- one more full polling cycle is required. This absorbs the
+  -- residual gap where the protocol-level state fields confirm slightly
+  -- ahead of the physical dimmer output actually settling. Applies
+  -- whenever the transition involved an offset, either at the start (a
+  -- non-zero offset was active/being cleared) or at the new position (the
+  -- target itself has a non-zero offset component) -- not to plain
+  -- preset-to-preset moves with no offset in play, which stay as
+  -- responsive as the fade-rate model alone allows. (channelInvolvesOffset
+  -- and channelPendingUnmask themselves are declared earlier, alongside
   -- channelAnimating -- parseLights, defined before this point in the
   -- file, needs them as upvalues; see the comment there.)
 
@@ -2700,13 +2545,12 @@ if Controls then
     -- Population tracking: none of it is valid for a new target either --
     -- Status must not read "OK" again until everything has freshly
     -- responded from whichever unit we're now connecting to. Full reset
-    -- (both CAI and HTTP sides) -- unlike connect()'s own CAI-only reset
-    -- (v1.2.0.32), an actual target change really does invalidate
-    -- previously-fetched HTTP data too (names, dimmer setup, LIN scan,
-    -- scrape all belonged to the OLD unit). connect(), called right after
-    -- this by every caller, only re-does the CAI half on top -- but
-    -- resetting fully here too means the display is already correct even
-    -- before connect() runs.
+    -- (both CAI and HTTP sides) -- unlike connect()'s own CAI-only reset,
+    -- an actual target change really does invalidate previously-fetched
+    -- HTTP data too (names, dimmer setup, LIN scan, scrape all belonged to
+    -- the old unit). connect(), called right after this by every caller,
+    -- only re-does the CAI half on top -- but resetting fully here too
+    -- means the display is already correct even before connect() runs.
     resetPopulationTracking()
 
     -- HTTP connection: force a clean reconnect rather than letting a stale
@@ -2717,7 +2561,7 @@ if Controls then
     httpBusy         = false
     currentReqType   = "SCRAPE"
     currentApplyFn   = nil
-    routineTicks     = 0  -- v1.2.0.41: fresh target restarts the LIGHTPOLL countdown from zero
+    routineTicks     = 0  -- fresh target restarts the LIGHTPOLL countdown from zero
 
     -- Learned dimmer configuration/state -- all specific to whichever unit
     -- we were last actually talking to
@@ -2771,14 +2615,14 @@ if Controls then
     dbg("Reset all learned state and queues for new target")
   end
 
-  -- v1.2.0.41: `waitZone`'s "is the self-initiated wait for this channel
-  -- still genuinely live" question now has to check BOTH presetPending and
-  -- offsetPending whenever the wait is preset-tagged, because
-  -- beginPresetPending always sets both (selecting a preset resets the
-  -- zone's offset to 0 on the real device, manual sec 5.9) -- checking only
-  -- presetPending left a gap where the offset side was still genuinely
-  -- pending confirmation. An offset-tagged wait only ever set offsetPending
-  -- to begin with, so it alone is still the right (and only) check there.
+  -- "Is the self-initiated wait for this channel still genuinely live"
+  -- must check both presetPending and offsetPending whenever the wait is
+  -- preset-tagged, because beginPresetPending always sets both (selecting
+  -- a preset resets the zone's offset to 0 on the real device, manual sec
+  -- 5.9) -- checking only presetPending would leave a gap where the offset
+  -- side is still genuinely pending confirmation. An offset-tagged wait
+  -- only ever sets offsetPending to begin with, so it alone is the right
+  -- (and only) check there.
   local function selfInitWaitLive(ch)
     local waitZone = channelWaitZone[ch]
     if not waitZone then return false end
@@ -2790,10 +2634,10 @@ if Controls then
     return false
   end
 
-  -- v1.2.0.41: route every place that would otherwise unmask a channel
-  -- (clear channelAnimating) through here. Per Steve's explicit request,
-  -- once the local ramp is done and the zone-level flag(s) have genuinely
-  -- cleared, a channel whose transition involved a non-zero offset at
+  -- Every place that would otherwise unmask a channel (clear
+  -- channelAnimating) routes through here: once the local ramp is done and
+  -- the zone-level flag(s) have genuinely cleared, a channel whose
+  -- transition involved a non-zero offset at
   -- either end still doesn't trust the very next live poll -- real
   -- hardware can ack the protocol-level state fields slightly ahead of the
   -- physical dimmer output actually settling. That one extra poll is
@@ -2828,31 +2672,19 @@ if Controls then
     local start = Controls.Channel_Level[ch] and Controls.Channel_Level[ch].Value or target
     local distance = math.abs(target - start)
 
-    -- v1.2.0.41 fix (extended in v1.2.0.36 via selfInitWaitLive, see above):
-    -- v1.2.0.31 added a guard against a poll/flag-detected call
-    -- (applyCompensation=true) landing on top of a still-active
-    -- self-initiated wait (v1.2.0.30) -- but only inside the `distance==0`
-    -- branch below. Steve confirmed the exact same symptom still happens
-    -- for a self-initiated None press when a non-zero offset is active:
-    -- turns out the redundant fast-path call (House/Stage flags detecting
-    -- the same None transition, ~2s cycle) doesn't reliably land AFTER our
-    -- own floor-clamped ~0.5s ramp has already reached 0 -- it can just as
-    -- easily land WHILE that ramp is still mid-flight (distance ~= 0),
-    -- which falls through to the *general* ramp-setup path further below.
-    -- That path's own `else` clause unconditionally set
-    -- `channelWaitZone[ch] = nil` whenever applyCompensation was true, with
-    -- no check for a still-active self-initiated wait -- the identical bug,
-    -- just unreachable by the v1.2.0.31 fix because it only patched the
-    -- distance==0 case. Moving the check up here, before the distance==0
-    -- branch, covers BOTH cases with one guard: a poll/flag-detected call
-    -- that finds a self-initiated wait still genuinely pending (confirmed
-    -- via the zone-level presetPending/offsetPending flag, not just the
-    -- presence of channelWaitZone) is ignored outright -- no writes, no
-    -- state changes -- regardless of whether it happened to arrive before
-    -- or after our own ramp reached its target. Only real device
-    -- confirmation (checked every meterTimer tick once the ramp reaches
-    -- target) or that flag's own 15s failsafe may end the mask; the two
-    -- calls compose, with the self-initiated one owning the mask lifecycle
+    -- This guard sits before the distance==0 branch (rather than inside
+    -- it) so it covers a poll/flag-detected call arriving either before or
+    -- after our own self-initiated ramp reaches its target -- e.g. the
+    -- redundant fast-path call (House/Stage flags detecting the same
+    -- transition, ~2s cycle) can land while a self-initiated ~0.5s
+    -- floor-clamped ramp is still mid-flight (distance ~= 0), not just
+    -- after it completes. A poll/flag-detected call that finds a
+    -- self-initiated wait still genuinely pending (confirmed via the
+    -- zone-level presetPending/offsetPending flag, not just the presence
+    -- of channelWaitZone) is ignored outright -- no writes, no state
+    -- changes. Only real device confirmation (checked every meterTimer
+    -- tick once the ramp reaches target) or that flag's own 15s failsafe
+    -- may end the mask; the self-initiated call owns the mask lifecycle
     -- for its own animation's entire duration, not just its final instant.
     if applyCompensation and selfInitWaitLive(ch) then
       return -- ignored entirely -- the self-initiated ramp already in progress owns this channel
@@ -2880,28 +2712,28 @@ if Controls then
       finishChannelWait(ch)
       return
     end
-    -- v1.2.0.18 fix: even an "instant" target (no fade data, e.g. None,
-    -- which passes fadeSec=nil) now runs a brief floor-clamped animation
-    -- rather than truly bypassing the system. The bypass was a real race:
-    -- setting channelAnimating=false immediately opened a window where an
-    -- HTTP response already in flight *before* this command was sent
-    -- (single connection -- only one request outstanding at a time) could
-    -- arrive carrying the OLD level, get applied straight through (since
-    -- nothing was masking it), and briefly show the wrong value before our
-    -- own command's response corrected it moments later -- meter pops back
-    -- up, then pops back down. Keeping channelAnimating=true, even for
-    -- just the ~0.5s floor, closes that window the same way every other
+    -- Even an "instant" target (no fade data, e.g. None, which passes
+    -- fadeSec=nil) runs a brief floor-clamped animation rather than truly
+    -- bypassing the system. A true bypass is a real race: setting
+    -- channelAnimating=false immediately opens a window where an HTTP
+    -- response already in flight before this command was sent (single
+    -- connection -- only one request outstanding at a time) could arrive
+    -- carrying the old level, get applied straight through since nothing
+    -- is masking it, and briefly show the wrong value before our own
+    -- command's response corrects it moments later -- meter pops back up,
+    -- then pops back down. Keeping channelAnimating=true, even for just
+    -- the ~0.5s floor, closes that window the same way every other
     -- transition is already protected.
     --
-    -- v1.2.0.29 fix: DETECTION_LAG_COMPENSATION only makes sense for a
-    -- change we found out about *late*, via polling -- there's no lag to
-    -- compensate for when the change is our own button press or fader
-    -- drag; we know about it instantly. Applying the compensation
-    -- unconditionally made self-initiated offset changes (fixed 3s fade)
-    -- finish roughly 2/3 early, unmasking the channel while the real
-    -- device was still genuinely mid-transition -- the next live poll
-    -- would then report the real, still-low level, popping the meter back
-    -- down before a later poll finally showed the correct settled value.
+    -- DETECTION_LAG_COMPENSATION only makes sense for a change we found out
+    -- about late, via polling -- there's no lag to compensate for when the
+    -- change is our own button press or fader drag, since we know about it
+    -- instantly. Applying the compensation unconditionally would make
+    -- self-initiated offset changes (fixed 3s fade) finish roughly 2/3
+    -- early, unmasking the channel while the real device is still
+    -- genuinely mid-transition -- the next live poll would then report the
+    -- real, still-low level, popping the meter back down before a later
+    -- poll finally shows the correct settled value.
     local effectiveFadeSec = fadeSec or 0
     if applyCompensation then
       effectiveFadeSec = effectiveFadeSec - DETECTION_LAG_COMPENSATION
@@ -2911,14 +2743,14 @@ if Controls then
     channelSimTarget[ch] = target
     channelSimRate[ch]   = distance / effectiveFadeSec  -- %/sec; VARIES per transition so the whole thing takes ~effectiveFadeSec seconds regardless of distance
     channelAnimating[ch] = true
-    channelPendingUnmask[ch] = nil  -- v1.2.0.41: a fresh animation invalidates any leftover grace state from a prior one
-    -- v1.2.0.30: for a self-initiated change (applyCompensation false),
-    -- remember which zone-level pending flag must ALSO clear before this
-    -- channel is allowed to trust live polls again -- our own local
-    -- animation reaching its target doesn't mean the eCNA has actually
-    -- confirmed anything yet. Poll/flag-detected changes (applyCompensation
-    -- true) don't need this -- the confirmation IS the detection. Safe to
-    -- clear unconditionally here (v1.2.0.41): the one case that made this
+    channelPendingUnmask[ch] = nil  -- a fresh animation invalidates any leftover grace state from a prior one
+    -- For a self-initiated change (applyCompensation false), remember which
+    -- zone-level pending flag must also clear before this channel is
+    -- allowed to trust live polls again -- our own local animation
+    -- reaching its target doesn't mean the eCNA has actually confirmed
+    -- anything yet. Poll/flag-detected changes (applyCompensation true)
+    -- don't need this, since the confirmation is the detection. Safe to
+    -- clear unconditionally here: the one case that would make this
     -- unsafe -- a poll/flag-detected call landing on a still-live
     -- self-initiated wait -- is already intercepted and returned early,
     -- above, before either branch of this function body runs at all.
@@ -2930,17 +2762,17 @@ if Controls then
     end
   end
 
-  -- v1.2.0.10 correction: field testing revealed the opposite of what was
-  -- assumed in v1.2.0.9. None is essentially INSTANT ("as fast as the UI
-  -- can update") when selected from any other preset. The ~3s that WAS
-  -- attributed to None is actually the Offset control's own fade time --
-  -- moving the offset takes ~3s to reach its new level from ANY preset,
-  -- including None. So preset-button transitions (Up/Down/Mid1/Mid2) still
-  -- use their configured Setup: QDC-400 Dimmers fade time, None-via-button
-  -- is instant, and ANY offset adjustment (regardless of active preset)
-  -- uses a fixed ~3s -- never the active preset's own fade time.
-  local NONE_FADE_SECONDS   = nil  -- None (via preset button) has no configured fade data; startChannelAnim now floors this to a brief ~0.5s animation rather than a true instant bypass (see v1.2.0.18 fix), which still feels effectively immediate but closes a stale-poll race
-  local OFFSET_FADE_SECONDS = 3    -- fixed duration for ANY offset change, field-measured ~3s, regardless of active preset
+  -- None is essentially instant (as fast as the UI can update) when
+  -- selected from any other preset -- it is not the ~3s that might be
+  -- expected by analogy with an offset change. That ~3s instead belongs to
+  -- the Offset control itself: moving the offset takes ~3s to reach its
+  -- new level from any preset, including None. So preset-button
+  -- transitions (Up/Down/Mid1/Mid2) use their configured Setup: QDC-400
+  -- Dimmers fade time, None-via-button is instant, and any offset
+  -- adjustment (regardless of active preset) uses a fixed ~3s -- never the
+  -- active preset's own fade time.
+  local NONE_FADE_SECONDS   = nil  -- None (via preset button) has no configured fade data; startChannelAnim floors this to a brief ~0.5s animation rather than a true instant bypass, which still feels effectively immediate but closes a stale-poll race
+  local OFFSET_FADE_SECONDS = 3    -- fixed duration for any offset change, regardless of active preset
 
   -- Trigger local animation for every channel assigned to `zone` (1-based)
   -- for a PRESET BUTTON press or a poll-detected external preset change
@@ -2953,8 +2785,8 @@ if Controls then
   -- correct to the true combined level once a later poll overwrote it.
   -- `applyCompensation` should be true only for changes detected via
   -- polling or the fast flag-scrape path -- never for our own button press.
-  -- `priorOffset` (v1.2.0.41): whatever offset was active immediately
-  -- before this transition began, if known -- used only to decide whether
+  -- `priorOffset`: whatever offset was active immediately before this
+  -- transition began, if known -- used only to decide whether
   -- the one-extra-poll-cycle settling guard applies (see
   -- channelInvolvesOffset above); defaults to offsetVal itself when not
   -- given (the fast-path caller has no separate "prior" signal).
@@ -3000,11 +2832,11 @@ if Controls then
           target = offsetVal  -- None (or not yet known): offset is the absolute level
         end
         if target then
-          -- v1.2.0.41: this is by definition an offset change -- always
-          -- treated as "involves offset" for the one-extra-poll-cycle
-          -- settling guard, regardless of whether offsetVal itself happens
-          -- to be 0 (e.g. dragging back down to 0 still means we started
-          -- with a non-zero offset a moment ago).
+          -- This is by definition an offset change -- always treated as
+          -- "involves offset" for the one-extra-poll-cycle settling guard,
+          -- regardless of whether offsetVal itself happens to be 0 (e.g.
+          -- dragging back down to 0 still means we started with a
+          -- non-zero offset a moment ago).
           startChannelAnim(ch, target, OFFSET_FADE_SECONDS, applyCompensation, zone, "offset", true)
         end
       end
@@ -3031,12 +2863,12 @@ if Controls then
           channelSimLevel[ch] = cur
           if Controls.Channel_Level[ch] then Controls.Channel_Level[ch].Value = cur end
           if Controls.Channel_Level_Text[ch] then Controls.Channel_Level_Text[ch].String = string.format("%d%%", math.floor(cur + 0.5)) end
-          -- v1.2.0.41: once channelPendingUnmask[ch] is set, this channel is
-          -- purely waiting on parseLights to consume its one-extra-poll-
-          -- cycle grace (see finishChannelWait) -- nothing left for this
-          -- tick to decide (cur/target already both parked at the same
-          -- value), and re-running the checks below would just clear
-          -- channelAnimating on the very next tick, defeating the guard
+          -- Once channelPendingUnmask[ch] is set, this channel is purely
+          -- waiting on parseLights to consume its one-extra-poll-cycle
+          -- grace (see finishChannelWait) -- nothing left for this tick to
+          -- decide (cur/target already both parked at the same value), and
+          -- re-running the checks below would just clear channelAnimating
+          -- on the very next tick, defeating the guard
           -- before a single live poll even has a chance to arrive.
           if cur == target and not channelPendingUnmask[ch] then
             local waitZone = channelWaitZone[ch]
