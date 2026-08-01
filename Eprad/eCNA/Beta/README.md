@@ -26,7 +26,7 @@ The plugin contains up to eight pages:
 5. **Macros**: Macro Execution Trigger Buttons.
 6. **RDI**: RDI Execution Trigger Buttons.
 7. **Program**: eCNA Program control and Mmonitoring.
-8. **NanoHost**: Option(Configured in Properties) to monitor the Eprad nanoHost (show schedules).  
+8. **NanoHost**: Option (Configured in Properties) to monitor the Eprad nanoHost (show schedules).  
 
 ## Properties
 
