@@ -70,7 +70,7 @@ The plugin contains up to eight pages:
 
 <img width="683" height="557" alt="image" src="https://github.com/user-attachments/assets/764cb9cc-0ce7-462e-bc67-39cc0f794242" />
 
-<img width="754" height="1342" alt="image" src="https://github.com/user-attachments/assets/e6cbba1d-e869-42d0-adfd-e043a1a9bbbb" />
+<img width="754" height="1347" alt="image" src="https://github.com/user-attachments/assets/f19e6797-6375-41a5-8010-94cd311bd0e3" />
 
 ## Requirements
 
