@@ -1,6 +1,6 @@
 # Eprad eCNA Plugin
 
-Version: 1.2
+Version: 1.3
 
 Author: Steve Guttag
 
@@ -13,10 +13,11 @@ The Eprad eCNA plugin is designed to aid in the integration of the Eprad eCNA li
 - **RDI Execution**: Provides for the execution of any of the RDI (Remote Devices) command execution.
 - **Program Control and Monitoring**: The eCNA can run a traditional cinema automation program (step through a program one cue at a time).
 - **Eprad Dimmer Monitoring and Control**: As of version 1.2, the plugin can now monitor and control an Eprad QDC-400 type dimmer.
+- **Eprad nanoHost Monitoring**: As of version 1.3, the plugin can now monitor the Eprad nanoHost.
 
 ## Pages
 
-The plugin contains up to seven pages:
+The plugin contains up to eight pages:
 
 1. **Setup**: Enter IP address and desired port (defaults to 13002).  The Model and firmware version number is retrieved.
 2. **Outputs**: Output Flag status and Control.  Aux Output Names are fetched from the eCNA.
@@ -24,7 +25,8 @@ The plugin contains up to seven pages:
 4. **Inputs**: Input Flag Status.  Aux Input Flag Names are fetched from the eCNA.
 5. **Macros**: Macro Execution Trigger Buttons.
 6. **RDI**: RDI Execution Trigger Buttons.
-7. **Program**: eCNA Program control and Mmonitoring. 
+7. **Program**: eCNA Program control and Mmonitoring.
+8. **NanoHost**: Option (Configured in Properties) to monitor the Eprad nanoHost (show schedules).  
 
 ## Properties
 
@@ -33,9 +35,9 @@ The plugin contains up to seven pages:
 - **ScrapeInterval**: The rate that Input and Output flags are updated (0.5-20 seconds; 2-second default).  Times below 1.3-seconds will cause a slow-down of the the eCNA's web-ui.
 - **LightPollInterval**: New for 1.2.  Sets the rate at which the dimmer controls are polled for status (0.5 - 20 seconds; 3-second default).
 - **EnableQDC_Lighting**: When set to Yes (default is No) the Dimmer Control Tab is revealed.
-- **QDCZones**: (Only available when QDC_Lighting is enabled) Sets the number of lighting Zones (1-16) for the QDC-400 dimmer (default is 2; House and Stage).
-- **QDCChannels**: (Only available when QDC_Lighting is enabled) Sets the number of QDC-400 dimmer channels (1-16) (default is 2). 
-- **Auto Refresh Names**: The plugin will fetch the Aux Input and Aux Output names.  However, if the integrator changes one of those names, the plugin will only (automatically) update if this setting is set to yes (default = Yes).
+- **QDCZones**: Set the number of lighting Zones (1-16) for the QDC-400 dimmer (default is 2; House and Stage).
+- **QDCChannels**: Set the number of QDC-400 dimmer channels (1-16) (default is 2). 
+- **EnableNanoHost**: When set to Yes (default is No) the NanoHost tab is revealed. 
 - **Show Debug**:  Standard Q-SYS Debug window.
 
 ## Usage
@@ -47,22 +49,14 @@ The plugin contains up to seven pages:
 5. Expose the desired Input/Output pins to integrate the automation within a Q-SYS design.
 6. Configure Eprad QDC-400 dimmer properties to mach the installed dimmer.  
 
-## What's New in 1.2
+## What's New in 1.3
 
-Version 1.2 adds optional monitoring and control of Eprad QDC-400 dimmer lighting boards, replicating the eCNA's own Status: Light Control web page, plus several changes to existing behavior:
-
-- **QDC-400 Dimmer Lighting** — new optional Dimmer Control page with per-zone preset buttons (Up/Down/Mid1/Mid2/None), an offset fader with dedicated increase/decrease step buttons, and animated per-channel level meters.
-- Scrape Interval — accepts fractional seconds (e.g. 1.6), not just whole seconds.
-- Light Poll Interval — new property controlling how often dimmer status is polled, independently of Scrape Interval.
-- Faster Digital Projector status — the four Digital Projector Power/Video buttons now update immediately from the eCNA's own unsolicited event reports rather than waiting on the next scrape.
-- Poll Rate removed — no longer a configurable property; the plugin now uses a fixed 45-second rate.
-- Auto Refresh Names removed — input/output names (and, when dimmer lighting is enabled, zone names and QDC board detection) are now fetched once on connect and otherwise only on demand.
-- Refresh buttons consolidated — the separate Refresh Input Names / Refresh Output Names buttons have been replaced by a single Refresh Setup Data button on the Setup page.
-- Debug tab removed — the Show Debug Tab property, its Debug page, and the Last_Tx/Last_Rx/Last_Error pins are gone; everything they showed is already in the Q-SYS Debug window.
+- Added Eprad Nano Host monitoring.
+- Screen number is fetched on the Setup Page.
 
 ## Images 
 
-<img width="684" height="727" alt="image" src="https://github.com/user-attachments/assets/e97caee6-153a-4cae-a98b-ed633a57f97e" />
+<img width="802" height="763" alt="image" src="https://github.com/user-attachments/assets/0815f195-edf5-4d47-ad0b-dbe6a745e7b7" />
 
 <img width="799" height="933" alt="image" src="https://github.com/user-attachments/assets/0442da97-67ad-49a4-bf51-d21919a54859" />
 
@@ -75,6 +69,8 @@ Version 1.2 adds optional monitoring and control of Eprad QDC-400 dimmer lightin
 <img width="683" height="783" alt="image" src="https://github.com/user-attachments/assets/b7c7d56e-e040-4a32-ac64-2267b376068c" />
 
 <img width="683" height="557" alt="image" src="https://github.com/user-attachments/assets/764cb9cc-0ce7-462e-bc67-39cc0f794242" />
+
+<img width="754" height="1347" alt="image" src="https://github.com/user-attachments/assets/f19e6797-6375-41a5-8010-94cd311bd0e3" />
 
 ## Requirements
 
