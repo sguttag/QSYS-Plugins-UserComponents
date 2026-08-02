@@ -37,14 +37,20 @@
 -- test_no_apostrophes.lua before any build ships.
 
 PluginInfo = {
-  Name         = "Eprad~eCNA v1.3.0.65",
+  Name         = "Eprad~eCNA v1.3.0",
   Manufacturer = "STG",
-  Version      = "1.3.0.65",
+  Version      = "1.3.0",
   Id           = "8cd1a925-90ba-4640-8de9-886632d1e242",
   Description  = "Controls the Eprad eCNA Cinema Automation system via the CAI ASCII TCP interface, with optional Eprad QDC dimmer lighting monitoring/control and optional Eprad nanoHost POS management data display.",
   ShowDebug    = true,
   Author       = "Based on HTTP script 1.3.1 by Jay Wyatt and Steve Guttag."
 }
+
+-- Full internal build identifier, shown only on the Setup page (see the
+-- Credits section of GetControlLayout below) so a specific install can be
+-- identified for support purposes -- distinct from PluginInfo.Version,
+-- which is the clean outward-facing release version.
+local BUILD_VERSION = "1.3.0.65"
 
 function GetColor(props)
   return { 72, 147, 217 }
@@ -513,8 +519,9 @@ function GetControlLayout(props)
       Position = {(W-21)/2, y},
       Size     = {21, 50}
     })
-    -- Version number, lower-right corner
-    table.insert(graphics, { Type="Label", Text="Version "..PluginInfo.Version,
+    -- Build number, lower-right corner -- full internal identifier, not
+    -- the simplified outward-facing PluginInfo.Version (see BUILD_VERSION above).
+    table.insert(graphics, { Type="Label", Text="Version "..BUILD_VERSION,
       Position={W-100, y+44}, Size={90, 14}, HTextAlign="Right", FontSize=9 })
 
   -- ================================================================
