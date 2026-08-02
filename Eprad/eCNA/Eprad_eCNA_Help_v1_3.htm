@@ -145,7 +145,7 @@
 <body>
     <div role="main">
         <h1>Eprad eCNA Cinema Automation Plugin</h1>
-        <p class="Version">Version 1.3 &nbsp;&nbsp;|&nbsp;&nbsp; Build 32</p>
+        <p class="Version">Version 1.3 &nbsp;&nbsp;|&nbsp;&nbsp; Build 58</p>
 
         <p>Use this plugin to monitor and control an Eprad eCNA Cinema Automation system from within your Q-SYS designs. The plugin communicates over two independent channels: the CAI (Cinema Automation Interface) ASCII TCP protocol for commands and status, and a direct HTTP connection for I/O flag detail and, optionally, Eprad QDC-400 dimmer lighting and Eprad nanoHost POS management data.</p>
 
@@ -167,6 +167,7 @@
         <ul style="list-style-type: square;">
             <li><b>nanoHost POS Management Data</b> — new optional <span class="GUI_Callout">NanoHost</span> page showing live Status Flags, Show Timers, and a Show Schedule for up to 10 performances, sourced from the nanoHost integration. See <a href="#NanoHost">nanoHost POS Management Data</a>.</li>
             <li><b>Screen Id</b> — new read-only field on the Setup page showing the eCNA's configured screen number (0–63).</li>
+            <li><b>Show Schedule Flags</b> — four new flag-type outputs (Day Start, Day End, First Show End, Last Show Start) that turn the Show Schedule's FS/FE/LS/LE markers into ready-to-use automation triggers, each with its own adjustable Offset. See <a href="#ScheduleFlags">Show Schedule Flags</a>.</li>
         </ul>
 
         <h2><a name="Compatibility"></a>Compatibility</h2>
@@ -436,6 +437,27 @@
         <p>Similarly, the show that is running (Yellow highlight) is set when "Time Before Feature Start" reaches 0:00 for the active feature. It will remain active until the next feature is in its show. The last show will keep its Yellow highlight active until "Time After Feature End" reaches 255:59.</p>
         <p class="note"><b>Note: </b>10 rows is a practical maximum, not a hard limit reported by the nanoHost — typical installations see 1–6 performances per day.</p>
 
+        <h3><a name="ScheduleFlags"></a>Show Schedule Flags</h3>
+        <p>Four additional flag-type outputs turn the FS/FE/LS/LE Show Schedule markers described above into ready-to-use automation triggers, each with its own adjustable Offset so it can be tuned to the amount of preshow content (ads, trailers, etc.) actually playing ahead of the posted showtime. All four compare against the same live <span class="GUI_Callout">Time of Day</span> clock used elsewhere on this page, so they respond immediately as each minute ticks over rather than waiting on the next nanoHost poll.</p>
+
+        <h4 class="BridgeHead">Day Start</h4>
+        <p>State LED and Trigger. Turns on once Time of Day reaches the first show's StartTime plus the Day Start Offset, and stays on until FS (First Show Start) itself goes false. The Trigger fires once, at the moment Day Start turns on.</p>
+        <p>Offset range: -180 to +60 minutes. Set the Offset to the desired lead time before the first show, including your typical preshow length ahead of the posted Start Time.</p>
+
+        <h4 class="BridgeHead">Day End</h4>
+        <p>State LED and Trigger. Turns on once Time of Day reaches the last show's StartTime plus RunTime plus the Day End Offset — this can land after midnight, on the following calendar day, without issue. Stays on until LE (Last Show End) itself goes false. The Trigger fires once, at the moment Day End turns on.</p>
+        <p>Offset range: -60 to +240 minutes. Set the Offset to allow for normal cooling and content transfers, plus any compensation needed for preshow time ahead of the posted Start Time.</p>
+
+        <h4 class="BridgeHead">First Show End</h4>
+        <p>Trigger only — there is no state LED for this one. The Trigger fires once per day, at whichever of the following happens first: Time of Day reaches the first show's StartTime plus RunTime plus the First Show End Offset, or the FE (First Show End) marker itself turns off before that time is reached. FE stays on through the gap between the first and second shows (Time Between Features), only turning off once that gap times out — around when the second show starts. The second condition is a ceiling: if the Offset is long enough that the first condition hasn't been reached by the time FE actually turns off, the Trigger fires immediately rather than letting a large Offset push it out past the second show's start.</p>
+        <p>Offset range: -60 to +60 minutes. Set the Offset to compensate for Preshow content.</p>
+
+        <h4 class="BridgeHead">Last Show Start</h4>
+        <p>State LED and Trigger. Turns on once Time of Day reaches the last show's StartTime plus the Last Show Start Offset, and stays on until LS (Last Show Start) itself goes false. The Trigger fires once, at the moment Last Show Start turns on.</p>
+        <p>Offset range: -90 to +60 minutes. Set the Offset to compensate for the Preshow content.</p>
+
+        <p class="note"><b>Note: </b>Each Trigger fires only once per day and re-arms automatically the next time its governing marker (FS, FE, or LS) resets with a new day's schedule — no manual reset is needed.</p>
+
         <h3><a name="NanoHostRefresh"></a>Automatic Refresh</h3>
         <p>This page is polled roughly every 2 minutes — deliberately much slower than the regular I/O flag scrape, since the nanoHost's own data doesn't update any faster than every 5 minutes regardless. In addition to that routine poll, the plugin requests an extra, early update from the nanoHost shortly after a feature's start time arrives, and again shortly after its end time arrives.</p>
 
@@ -561,6 +583,29 @@
                 <tr class="even"><td>NanoHost Show LE 1–10<br/><small>(Last Show End)</small></td><td class="center">0 / 1</td><td class="center">Off / On</td><td class="center">0 / 1</td><td class="center">Output</td></tr>
                 <tr class="odd"><td>NanoHost Show Start 1–10<br/><small>(Cyan highlight, currently-active performance)</small></td><td class="center">0 / 1</td><td class="center">Off / On</td><td class="center">0 / 1</td><td class="center">Output</td></tr>
                 <tr class="even"><td>NanoHost Show End 1–10<br/><small>(Yellow highlight, in progress past showtime)</small></td><td class="center">0 / 1</td><td class="center">Off / On</td><td class="center">0 / 1</td><td class="center">Output</td></tr>
+                <tr class="odd"><td>NanoHost Day Start</td><td class="center">0 / 1</td><td class="center">Off (Grey) / On (Green)</td><td class="center">0 / 1</td><td class="center">Output</td></tr>
+                <tr class="even"><td>NanoHost Day Start Trigger</td><td class="center">0 / 1</td><td class="center">Off / On</td><td class="center">0 / 1</td><td class="center">Output</td></tr>
+                <tr class="odd"><td>NanoHost Day Start Offset</td><td class="center">-180 – 60</td><td class="center">—</td><td class="center">—</td><td class="center">Input / Output</td></tr>
+                <tr class="even"><td>NanoHost Day Start Offset Text</td><td class="center" colspan="3">(text, editable, -180 to 60)</td><td class="center">Input / Output</td></tr>
+                <tr class="odd"><td>NanoHost Day Start Offset Inc</td><td class="center">0 / 1</td><td class="center">Off / On</td><td class="center">0 / 1</td><td class="center">Input / Output</td></tr>
+                <tr class="even"><td>NanoHost Day Start Offset Dec</td><td class="center">0 / 1</td><td class="center">Off / On</td><td class="center">0 / 1</td><td class="center">Input / Output</td></tr>
+                <tr class="odd"><td>NanoHost Day End</td><td class="center">0 / 1</td><td class="center">Off (Grey) / On (Green)</td><td class="center">0 / 1</td><td class="center">Output</td></tr>
+                <tr class="even"><td>NanoHost Day End Trigger</td><td class="center">0 / 1</td><td class="center">Off / On</td><td class="center">0 / 1</td><td class="center">Output</td></tr>
+                <tr class="odd"><td>NanoHost Day End Offset</td><td class="center">-60 – 240</td><td class="center">—</td><td class="center">—</td><td class="center">Input / Output</td></tr>
+                <tr class="even"><td>NanoHost Day End Offset Text</td><td class="center" colspan="3">(text, editable, -60 to 240)</td><td class="center">Input / Output</td></tr>
+                <tr class="odd"><td>NanoHost Day End Offset Inc</td><td class="center">0 / 1</td><td class="center">Off / On</td><td class="center">0 / 1</td><td class="center">Input / Output</td></tr>
+                <tr class="even"><td>NanoHost Day End Offset Dec</td><td class="center">0 / 1</td><td class="center">Off / On</td><td class="center">0 / 1</td><td class="center">Input / Output</td></tr>
+                <tr class="odd"><td>NanoHost First Show End Trigger</td><td class="center">0 / 1</td><td class="center">Off / On</td><td class="center">0 / 1</td><td class="center">Output</td></tr>
+                <tr class="even"><td>NanoHost First Show End Offset</td><td class="center">-60 – 60</td><td class="center">—</td><td class="center">—</td><td class="center">Input / Output</td></tr>
+                <tr class="odd"><td>NanoHost First Show End Offset Text</td><td class="center" colspan="3">(text, editable, -60 to 60)</td><td class="center">Input / Output</td></tr>
+                <tr class="even"><td>NanoHost First Show End Offset Inc</td><td class="center">0 / 1</td><td class="center">Off / On</td><td class="center">0 / 1</td><td class="center">Input / Output</td></tr>
+                <tr class="odd"><td>NanoHost First Show End Offset Dec</td><td class="center">0 / 1</td><td class="center">Off / On</td><td class="center">0 / 1</td><td class="center">Input / Output</td></tr>
+                <tr class="even"><td>NanoHost Last Show Start</td><td class="center">0 / 1</td><td class="center">Off (Grey) / On (Green)</td><td class="center">0 / 1</td><td class="center">Output</td></tr>
+                <tr class="odd"><td>NanoHost Last Show Start Trigger</td><td class="center">0 / 1</td><td class="center">Off / On</td><td class="center">0 / 1</td><td class="center">Output</td></tr>
+                <tr class="even"><td>NanoHost Last Show Start Offset</td><td class="center">-90 – 60</td><td class="center">—</td><td class="center">—</td><td class="center">Input / Output</td></tr>
+                <tr class="odd"><td>NanoHost Last Show Start Offset Text</td><td class="center" colspan="3">(text, editable, -90 to 60)</td><td class="center">Input / Output</td></tr>
+                <tr class="even"><td>NanoHost Last Show Start Offset Inc</td><td class="center">0 / 1</td><td class="center">Off / On</td><td class="center">0 / 1</td><td class="center">Input / Output</td></tr>
+                <tr class="odd"><td>NanoHost Last Show Start Offset Dec</td><td class="center">0 / 1</td><td class="center">Off / On</td><td class="center">0 / 1</td><td class="center">Input / Output</td></tr>
             </tbody>
         </table>
 
