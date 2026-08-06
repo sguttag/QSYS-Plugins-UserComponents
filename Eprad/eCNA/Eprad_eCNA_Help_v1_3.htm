@@ -145,7 +145,7 @@
 <body>
     <div role="main">
         <h1>Eprad eCNA Cinema Automation Plugin</h1>
-        <p class="Version">Version 1.3 &nbsp;&nbsp;|&nbsp;&nbsp; Build 58</p>
+        <p class="Version">Version 1.3 &nbsp;&nbsp;|&nbsp;&nbsp; Build 66</p>
 
         <p>Use this plugin to monitor and control an Eprad eCNA Cinema Automation system from within your Q-SYS designs. The plugin communicates over two independent channels: the CAI (Cinema Automation Interface) ASCII TCP protocol for commands and status, and a direct HTTP connection for I/O flag detail and, optionally, Eprad QDC-400 dimmer lighting and Eprad nanoHost POS management data.</p>
 
@@ -168,6 +168,7 @@
             <li><b>nanoHost POS Management Data</b> — new optional <span class="GUI_Callout">NanoHost</span> page showing live Status Flags, Show Timers, and a Show Schedule for up to 10 performances, sourced from the nanoHost integration. See <a href="#NanoHost">nanoHost POS Management Data</a>.</li>
             <li><b>Screen Id</b> — new read-only field on the Setup page showing the eCNA's configured screen number (0–63).</li>
             <li><b>Show Schedule Flags</b> — four new flag-type outputs (Day Start, Day End, First Show End, Last Show Start) that turn the Show Schedule's FS/FE/LS/LE markers into ready-to-use automation triggers, each with its own adjustable Offset. See <a href="#ScheduleFlags">Show Schedule Flags</a>.</li>
+            <li><b>RST Poll Interval</b> — controls the CAI status poll driving the whole Program page (Control State, Stopped State, Cue Number, Program Number, Segment, CAI Access), including how quickly a Segment change is reflected. Defaults to 45 seconds so existing designs see no change in behavior. See <a href="#RSTPollInterval">RST Poll Interval</a>.</li>
         </ul>
 
         <h2><a name="Compatibility"></a>Compatibility</h2>
@@ -188,7 +189,7 @@
         <h3>Communication Architecture</h3>
         <p>The plugin uses two simultaneous communication channels:</p>
         <ul style="list-style-type: square;">
-            <li><b>CAI TCP (port 13002):</b> The primary control channel. Sends commands (EVT, OUT, RDI, MAC) and receives status responses (RST, RID) and unsolicited event reports (RPT,EVT). A full RST status re-poll is also triggered immediately whenever a relevant event report arrives, and on a fixed internal interval as a background safety net — nearly all status updates arrive via the unsolicited events, not this timer. Only one device may have a port open at a time.</li>
+            <li><b>CAI TCP (port 13002):</b> The primary control channel. Sends commands (EVT, OUT, RDI, MAC) and receives status responses (RST, RID) and unsolicited event reports (RPT,EVT). A full RST status re-poll is also triggered immediately whenever a relevant event report arrives, and on a regular interval (see <a href="#RSTPollInterval">RST Poll Interval</a>) as a background safety net — most status updates arrive via the unsolicited events, not this timer, though a program Segment change relies on this poll exclusively. Only one device may have a port open at a time.</li>
             <li><b>HTTP (port 80):</b> A secondary read-only channel for I/O flag detail, providing the state of all 44 output flags and 31 input flags, including house lights, curtain, masking, lens, sound, and aux outputs. Polled independently at the <span class="GUI_Callout">Scrape Interval</span>; when <span class="GUI_Callout">Enable QDC Lighting</span> is on, this same connection also carries dimmer commands and status at the separate <span class="GUI_Callout">Light Poll Interval</span>.</li>
         </ul>
         <p class="note"><b>Note: </b>The HTTP scrape does not consume a CAI port. Multiple Q-SYS designs can scrape the eCNA web interface simultaneously without conflict. Only the CAI TCP connection is exclusive per port.</p>
@@ -203,6 +204,10 @@
 
         <h4 class="BridgeHead">Num RDI</h4>
         <p>Integer, 0–5 (default 5). Sets the number of RDI (Remote Device Interface) devices. Each device has 16 command buttons. Set to 0 to hide the RDI tab entirely.</p>
+
+        <h4 class="BridgeHead"><a name="RSTPollInterval"></a>RST Poll Interval</h4>
+        <p>Decimal, 2–55 seconds (default 45). Interval between CAI status requests (RST), which drive the entire Program page — Control State, Stopped State, Cue Number, Program Number, Segment Name/Index, and CAI Command Access. Most of the Program page also updates immediately from the eCNA's own unsolicited event reports, but a program segment change has no corresponding event to react to and can occur purely from Macro execution with no Cue involved — so <span class="GUI_Callout">Segment Name</span> and <span class="GUI_Callout">Segment Index</span> specifically can lag behind the actual eCNA state by up to this full interval. Lowering this value reduces that lag. Field testing found 5 seconds sufficiently fast for prompt Segment reporting with no adverse effect. The default of 45 seconds is unchanged from prior versions, so existing designs see no behavior change unless this is deliberately lowered.</p>
+        <p class="note"><b>Note: </b>The upper limit of 55 seconds is intentional, not arbitrary — the eCNA can treat a CAI connection that goes fully idle for 60 seconds as available to a second client, so this property is capped short of that to preserve a safety margin. Raising the property's own maximum past 55 is not supported.</p>
 
         <h4 class="BridgeHead">Scrape Interval</h4>
         <p>Decimal, 0.5–20 seconds (default 2). Interval between HTTP requests to the eCNA web interface for I/O flag detail. This is the primary update mechanism for the output and input flag indicators (house lights, curtain, masking, lens, sound, aux outputs, and input flags), and — independently of the <span class="GUI_Callout">Light Poll Interval</span> below — also determines how often that same connection is available to service a queued dimmer command or the periodic dimmer status poll when <span class="GUI_Callout">Enable QDC Lighting</span> is on. Values below 2 seconds may interfere with direct operation of the eCNA device; field testing found values as low as 0.5–1 second to work without issue, if faster flag response is needed.</p>
@@ -219,10 +224,10 @@
         <p>Boolean (default off). Turns on monitoring and control of Eprad QDC-400 dimmer lighting boards, adding the <span class="GUI_Callout">Dimmer Control</span> page and its associated controls. See <a href="#Dimmer">QDC-400 Dimmer Lighting</a> for full details.</p>
 
         <h4 class="BridgeHead">QDC Zones</h4>
-        <p>Integer, 1–16 (default 2). Number of lighting zones to display on the Dimmer Control page. Zone 1 is always House; Zone 2, if included, is always Stage; any zones above 2 are user-defined on the eCNA. Set to 1 for a House-only installation. This property is always shown regardless of the <span class="GUI_Callout">Enable QDC Lighting</span> setting, but only takes effect once that property is turned on.</p>
+        <p>Integer, 1–16 (default 2). Number of lighting zones to display on the Dimmer Control page. Zone 1 is always House; Zone 2, if included, is always Stage; any zones above 2 are user-defined on the eCNA. Set to 1 for a House-only installation. Only shown in Properties once <span class="GUI_Callout">Enable QDC Lighting</span> is turned on.</p>
 
         <h4 class="BridgeHead">QDC Channels</h4>
-        <p>Integer, 1–16 (default 2). Number of dimmer channel meters to display on the Dimmer Control page. A single QDC-400 board supports 4 channels; more than one board can be daisy-chained. This property is always shown regardless of the <span class="GUI_Callout">Enable QDC Lighting</span> setting, but only takes effect once that property is turned on.</p>
+        <p>Integer, 1–16 (default 2). Number of dimmer channel meters to display on the Dimmer Control page. A single QDC-400 board supports 4 channels; more than one board can be daisy-chained. Only shown in Properties once <span class="GUI_Callout">Enable QDC Lighting</span> is turned on.</p>
 
         <h4 class="BridgeHead">Enable NanoHost</h4>
         <p>Boolean (default off). Turns on monitoring of the Eprad nanoHost POS Management Data, adding the <span class="GUI_Callout">NanoHost</span> page (appended after Program) and its associated controls. See <a href="#NanoHost">nanoHost POS Management Data</a> for full details.</p>
@@ -335,10 +340,10 @@
         <p>Text field, read only. Displays the currently active program number.</p>
 
         <h4 class="BridgeHead">Segment Name</h4>
-        <p>Text field, read only. Displays the name of the current program segment.</p>
+        <p>Text field, read only. Displays the name of the current program segment. Unlike most of the Program page, this updates only on the next <a href="#RSTPollInterval">RST Poll Interval</a> cycle rather than immediately — see that property for how to shorten this lag.</p>
 
         <h4 class="BridgeHead">Segment Index</h4>
-        <p>Text field, read only. Displays the current segment index within the program.</p>
+        <p>Text field, read only. Displays the current segment index within the program. Updates on the same cadence as <span class="GUI_Callout">Segment Name</span> above — see <a href="#RSTPollInterval">RST Poll Interval</a>.</p>
 
         <h4 class="BridgeHead">CMD Access</h4>
         <p>Text field, read only. Displays the CAI command access status: <b>OK</b> (full access) or <b>BLK</b> (blocked — the eCNA is not accepting CAI commands).</p>
