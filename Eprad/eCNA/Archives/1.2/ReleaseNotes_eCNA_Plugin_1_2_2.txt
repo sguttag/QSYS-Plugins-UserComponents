@@ -1,5 +1,10 @@
 Eprad eCNA Plugin Release Notes
 
+Version 1.2.2 (build 50)
+
+Added (restored) RSTPoll_Interval to allow shorter than 45-second polling.  This will
+allow for faster updates to the Segment Name/Index.  5-seconds is the recommended value. 
+
 Version 1.2.1 (build 49)
 
 Implemented hiding of the Dimmer Zones and Channels when the QDC-400 Dimmers are not
