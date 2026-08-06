@@ -32,7 +32,7 @@ The plugin contains up to eight pages:
 
 - **NumMacros**: The number of macros you want to be available (0-50).
 - **NumRDI**: The number of remote devices (RDI) you want to be available.
-- **RSTPoll_Interval**: The rate that "Request Status (RST) command is issued.  This functions as a combination of keep-alive (must be issued every 60-seconds or less) as well as it is the only means that updates the "Segment Name" and Segment Index number in the plugin.  It defaults to 45-seconds to be consistent with prior versions but it should be set to 5-seconds to avoid an excessively laggy update to the Segment Name status.
+- **RSTPoll_Interval**: (requires 1.3.1 or later) The rate that "Request Status (RST) command is issued.  This functions as a combination of keep-alive (must be issued every 60-seconds or less) as well as it is the only means that updates the "Segment Name" and Segment Index number in the plugin.  It defaults to 45-seconds to be consistent with prior versions but it should be set to 5-seconds to avoid an excessively laggy update to the Segment Name status.
 - **ScrapeInterval**: The rate that Input and Output flags are updated (0.5-20 seconds; 2-second default).  Times below 1.3-seconds will cause a slow-down of the the eCNA's web-ui.
 - **LightPollInterval**: New for 1.2.  Sets the rate at which the dimmer controls are polled for status (0.5 - 20 seconds; 3-second default).
 - **EnableQDC_Lighting**: When set to Yes (default is No) the Dimmer Control Tab is revealed.
