@@ -42,9 +42,9 @@
 -- test_no_apostrophes.lua before any build ships.
 
 PluginInfo = {
-  Name         = "Eprad~eCNA v1.4.0.12",
+  Name         = "Eprad~eCNA v1.4.0.20",
   Manufacturer = "STG",
-  Version      = "1.4.0.12",
+  Version      = "1.4.0.20",
   Id           = "8cd1a925-90ba-4640-8de9-886632d1e242",
   Description  = "Controls the Eprad eCNA Cinema Automation system via the CAI ASCII TCP interface, with optional Eprad QDC dimmer lighting monitoring/control, optional Eprad nanoHost POS management data display, and optional Event Logging to Core Manager.",
   ShowDebug    = true,
@@ -57,7 +57,7 @@ PluginInfo = {
 -- which is the clean outward-facing release version. Beta builds keep all
 -- four version places identical in both -- the clean/internal split only
 -- happens at an actual numbered release, as 1.3.0 did at build 65.
-local BUILD_VERSION = "1.4.0.12"
+local BUILD_VERSION = "1.4.0.20"
 
 function GetColor(props)
   return { 72, 147, 217 }
@@ -386,22 +386,66 @@ function GetProperties(props)
     { Name="Num_RDI",     Type="integer",  Min=0,   Max=5,  Value=5  },
     -- RST_Poll_Interval: the CAI status-poll cadence driving the whole
     -- Program page (Control State, Stopped State, Cue Number, Program
-    -- Number, Segment, CAI Access). Default (45s) is unchanged from the
-    -- fixed internal constant this replaces -- existing installs see no
-    -- behavior change unless this is deliberately lowered. Made tunable
-    -- (v1.4.0.9) specifically so a faster segment-change latency can be
-    -- bench-tested without a new build per attempt -- per Steve, segment
-    -- changes can happen purely via Macro execution with no accompanying
-    -- CUE (or other) unsolicited event, so there is no reactive path for
-    -- them; polling faster is the only lever. Max=55 preserves the
-    -- original reasoning (stays under the eCNA's 60s idle-channel window,
-    -- which can otherwise let a second client bump this connection, with
-    -- some margin) -- do not raise the property's own Max past that
-    -- without re-deriving the safe ceiling. Lowering this increases CAI
-    -- traffic roughly in proportion; not yet field-tested at anything
-    -- other than the 45s default -- see the punch list before trusting a
-    -- lowered value in production.
-    { Name="RST_Poll_Interval", Type="double", Min=2, Max=55, Value=45 },
+    -- Number, Segment, CAI Access). Made tunable in v1.4.0.9 specifically
+    -- so a faster segment-change latency could be bench-tested without a
+    -- new build per attempt -- per Steve, segment changes can happen
+    -- purely via Macro execution with no accompanying CUE (or other)
+    -- unsolicited event, so there is no reactive path for them; polling
+    -- faster is the only lever. Max=55 preserves the original reasoning
+    -- (stays under the eCNA's 60s idle-channel window, which can
+    -- otherwise let a second client bump this connection, with some
+    -- margin) -- do not raise the property's own Max past that without
+    -- re-deriving the safe ceiling.
+    -- Default lowered from 45s to 5s in v1.4.0.19. This was field-tested
+    -- extensively during the connect-recovery investigation (Steve ran
+    -- RST_Poll_Interval=5 across dozens of reboot/cold-boot cycles on
+    -- three different QDS versions without incident -- see the punch
+    -- list's QDS-comparison sections). Per Steve (2026-08-09): the impact
+    -- on existing systems should be small and, if anything, an
+    -- improvement -- Program-page fields (especially Segment) reflect
+    -- reality up to 9x faster with no observed downside during testing.
+    -- Existing installs pick up the new 5s cadence automatically unless
+    -- this property is explicitly set otherwise.
+    { Name="RST_Poll_Interval", Type="double", Min=2, Max=55, Value=5 },
+    -- Enable_Ping_Gate (v1.4.0.20): ported from the out-of-band
+    -- EXPERIMENTAL_ConnectDiag diagnostic build after weeks of bench
+    -- testing across three QDS (Q-SYS Designer Software) versions --
+    -- 9.4.8 LTS, 9.13.1 LTS, and 10.4.1 (Main). Root cause: the eCNA's own
+    -- web/HTTP daemon can take anywhere from a few seconds to nearly a
+    -- minute to start answering requests after a reboot or cold power-on,
+    -- even though its CAI (port 13002) session and plain ICMP both come
+    -- back promptly -- confirmed to be a property of the eCNA itself, not
+    -- this plugin or any particular QDS version (reproduced identically
+    -- across all three). When on, a real disconnect (reboot/power-cycle
+    -- case) or a script-start connect against a not-yet-responding unit
+    -- (already-off case) pauses CAI reconnect and ALL HTTP traffic and
+    -- instead watches plain ICMP echo to the eCNA -- once it answers
+    -- continuously for Ping_Stable_Window seconds, normal reconnect/
+    -- connect resumes. This does not fully eliminate the eCNA's own
+    -- slowness (an internal stall can still occur on the other side of the
+    -- wait in some cases), but it measurably reduces both how often it
+    -- happens and how long it lasts when it does, confirmed at
+    -- Ping_Stable_Window=20 across all three QDS versions tested,
+    -- including several dozen back-to-back reboot/cold-boot cycles.
+    -- Default on (opt-out, not opt-in) per Steve (2026-08-09): ordinary
+    -- brief network interruptions (a dropped packet, a momentary switch
+    -- hiccup) never reach this gate at all -- CAI's own disconnect
+    -- detection doesn't declare a fault until a real outage of several
+    -- seconds has already occurred, confirmed on the bench by pulling the
+    -- eCNA's network cable and timing how long before a genuine
+    -- disconnect was even registered. A network unstable enough to trip
+    -- this gate routinely is already a larger problem this plugin
+    -- shouldn't have to compensate for.
+    { Name="Enable_Ping_Gate", Type="boolean", Value=true },
+    -- Ping_Stable_Window: how many continuous seconds of ICMP replies are
+    -- required before reconnect/connect resumes (see Enable_Ping_Gate
+    -- above). 20s is the value confirmed clean across all three QDS
+    -- versions tested; left tunable, same rationale as RST_Poll_Interval,
+    -- in case a different eCNA firmware revision or install needs a
+    -- different margin. Min=5 avoids a window so short it stops being a
+    -- meaningful settling period; Max=60 is a practical ceiling -- nothing
+    -- tested has needed anywhere close to that.
+    { Name="Ping_Stable_Window", Type="integer", Min=5, Max=60, Value=20 },
     { Name="Scrape_Interval", Type="double",  Min=0.5,   Max=20, Value=2  },
     -- The dimmer LIGHTPOLL (/rtLights.xml) runs on its own slower cadence,
     -- decoupled from Scrape_Interval, so Scrape_Interval controls real
@@ -1363,10 +1407,15 @@ if Controls then
   -- ── Configuration ──────────────────────────────────────────
   local TCP_PORT    = 13002  -- default port; overridden by Setup page TCP Port field
   -- CAI status-poll cadence (drives the whole Program page). Was a fixed
-  -- 45s internal constant; now reads RST_Poll_Interval (default still 45,
-  -- so existing installs are unaffected unless deliberately changed -- see
-  -- that property's own comment in GetProperties for the full rationale
-  -- and the 60s-idle-channel ceiling it must stay under).
+  -- 45s internal constant; now reads RST_Poll_Interval (default lowered
+  -- to 5s in v1.4.0.19 -- see that property's own comment in
+  -- GetProperties for the full rationale and the 60s-idle-channel
+  -- ceiling it must stay under). The `or 45` fallback below only matters
+  -- if Properties["RST_Poll_Interval"] is somehow missing entirely (e.g.
+  -- an old saved design predating this property) -- kept at 45 rather
+  -- than 5 deliberately, so that edge case falls back to the original,
+  -- longest-standing behavior rather than silently opting into the new
+  -- faster default.
   local POLL_RATE   = (Properties["RST_Poll_Interval"] and Properties["RST_Poll_Interval"].Value or 45)
   -- Use property values; fall back to defaults if not set
   local SCRAPE_RATE = (Properties["Scrape_Interval"] and Properties["Scrape_Interval"].Value or 2)
@@ -1485,7 +1534,30 @@ if Controls then
   local applyInputNames  = nil -- forward declaration; defined after name tables
   local applyOutputNames = nil -- forward declaration; defined after name tables
   local httpSock         = nil -- forward declaration; assigned after httpSock section
+  local scrapeTimer      = nil -- forward declaration (v1.4.0.20, moved up from the httpSock section below); PingGate's stability-window resolution needs to reach this as an upvalue, and PingGate itself has to sit before sock.EventHandler (which is textually earlier than the httpSock section) -- same forward-decl pattern as httpSock just above. Actual Timer.New() assignment stays where it was.
   local sock         = TcpSocket.New()  -- CAI TCP connection (port 13002)
+  -- Disable TcpSocket's own built-in auto-reconnect (v1.4.0.15). Its default
+  -- ReconnectTimeout is 5s, and it runs independently of reconnectTmr below
+  -- -- confirmed in the field via debug logs where every retry landed ~5s
+  -- after the last one regardless of what the backoff logic (5/15/30s) had
+  -- just scheduled. The built-in loop was winning the race every time,
+  -- silently hammering the eCNA with a fresh TCP connect (and RID/CFG send)
+  -- every 5s through an entire lockout, no matter what reconnectTmr intended.
+  -- Setting this to 0 makes reconnectTmr the sole driver of reconnect
+  -- timing, so the backoff actually takes effect.
+  sock.ReconnectTimeout = 0
+  -- Detect a silently-unresponsive eCNA promptly (v1.4.0.16). Without this,
+  -- TcpSocket only raises Closed/Error when the OS notices the TCP
+  -- connection itself died -- if the eCNA stops answering polls without
+  -- actually tearing down the connection (observed in the field: two
+  -- consecutive RST polls sent with zero reply), nothing catches that on its
+  -- own, and Status is left showing stale "OK" indefinitely while nothing is
+  -- actually being gathered. Margin of +10s over POLL_RATE tolerates one
+  -- missed/slow response without false-triggering on ordinary jitter, while
+  -- still catching real silence well before a second poll cycle would.
+  -- POLL_RATE is fixed for the plugin instance's lifetime (a Designer
+  -- property, not runtime-adjustable), so this only needs to be set once.
+  sock.ReadTimeout = POLL_RATE + 10
   local pollTimer    = Timer.New()      -- Fires RST poll at POLL_RATE seconds
   local reconnectTmr = Timer.New()      -- Fires reconnect attempt after disconnect
   local meterTimer   = nil              -- forward decl; assigned via Timer.New() below only if ENABLE_QDC. MUST live at this persistent scope, not inside "if ENABLE_QDC then" -- a Timer.New() declared as a `local` fully inside that block has no reference from outside it once the block finishes executing, and despite its EventHandler self-referencing it (a closure cycle), an object unreachable from any persistent root can still be garbage collected. That was very likely why the meter animation went choppy/stopped ticking in the field: the timer was probably being collected shortly after creation instead of running for the plugin's whole lifetime like pollTimer/reconnectTmr/scrapeTimer do.
@@ -1502,10 +1574,11 @@ if Controls then
   local outputsBaseline = {}  -- outputsBaseline[key] = last-known boolean, key is a control name or "GroupName" for exclusive groups
   local programBaseline = {}  -- programBaseline[field] = last-known string value (Control_State/Stopped_State/Program_Number)
   local nanoBaseline     = {} -- nanoBaseline[field] = last-known boolean for one of the six top-level NanoHost Status Flags
-  -- Event Log (Connection category) is deliberately collapsed to just these
-  -- two logical states, tracked separately from the five-value STATUS_*
-  -- display states -- see setStatus()'s own comment below for why.
-  local connLogState = nil  -- nil (never yet connected) | "OK" | "Disconnected"
+  -- Event Log (Connection category) tracks three logical states, separate
+  -- from the five-value STATUS_* display states -- see logConnTransition's
+  -- own comment below for how/why. Starts "Disconnected" -- functionally
+  -- identical to "never yet connected" for every check that reads this.
+  local connLogState = "Disconnected"  -- "Disconnected" | "Initializing" | "OK"
   local connecting        = false  -- true from the moment doConnect() actually calls sock:Connect() until Connected/Closed/Error resolves it; also used by the 10s failsafe below
   local connectingGen     = 0      -- bumped on every connect() call; debounces the whole disconnect-cooldown-reconnect sequence so rapid repeated calls collapse into one attempt (see connect()), and also invalidates a stale 10s failsafe timeout once a newer attempt has started
   local cooldownPending   = false  -- true from the moment a disconnect-then-reconnect cooldown is scheduled until doConnect() actually runs (whether it proceeds or stands down). Needed because between "we disconnected" and "we reconnect", isConnected and connecting are BOTH false -- without this, a second connect() call arriving in that window looks identical to "nothing in progress" and would skip the cooldown entirely.
@@ -1523,6 +1596,31 @@ if Controls then
   -- and making Status flap Initializing/Disconnected unpredictably instead
   -- of retrying on a clean, predictable cadence.
   local reconnectScheduled = false
+
+  -- Reconnect backoff after an explicit eCNA rejection (v1.4.0.14).
+  -- RSP,ERR,...,998,Resource Unavailable is the eCNA explicitly telling us
+  -- it has no session to give right now -- observed almost exclusively in
+  -- the minutes right after an eCNA power cycle (debug captures
+  -- 2026-08-07), where it can recur for anywhere from a few seconds to
+  -- several minutes. Retrying every fixed 5s regardless, the prior
+  -- behavior, meant dozens of fresh CAI connection attempts landing on the
+  -- eCNA during exactly the window it said it was constrained. This widens
+  -- the gap between attempts after repeated rejections instead -- 5s, then
+  -- 15s, then 30s, capped -- so we back off rather than hammer, while still
+  -- reconnecting automatically once the eCNA is ready. Does NOT change
+  -- behavior for any other disconnect reason (network blip, intentional
+  -- reconnect, connect timeout on an unreachable target) -- those keep the
+  -- existing flat 5s retry.
+  local RECONNECT_BACKOFF_STEPS = {5, 15, 30}  -- seconds; index clamps at the last entry
+  local reconnectBackoffIdx = 1
+  -- Set the instant a RSP,ERR with code 998 (Resource Unavailable) is
+  -- received; consumed and cleared by the very next Closed/Error/Reconnect
+  -- socket event (which, per the observed logs, follows within
+  -- milliseconds -- the eCNA sends the rejection and then closes the
+  -- connection). Also cleared on a fresh TCP-level Connected event as a
+  -- staleness guard, in case some future firmware behavior ever leaves the
+  -- socket open after an ERR instead of closing it.
+  local lastErrWasResourceUnavailable = false
 
   -- ── QDC-400 Dimmer Lighting state (v1.2) ────────────────────
   -- Forward-declared per the scoping rule in DESIGN NOTES §4: anything
@@ -1623,6 +1721,15 @@ if Controls then
   local function dbg(msg)
     print('[eCNA] ' .. tostring(msg))
   end
+
+  -- Script Start (v1.4.0.14): per the Q-SYS SDK's plugin debug
+  -- recommendations, PluginInfo.Version is printed to the debug log at the
+  -- very start of runtime, before any connection activity, so a captured
+  -- debug session is unambiguous about which build produced it. BUILD_VERSION
+  -- (the internal identifier, also shown on the Setup page Credits) is
+  -- included alongside it since the two can differ post-release -- see
+  -- BUILD_VERSION's own comment near the top of the file.
+  dbg("Plugin version " .. PluginInfo.Version .. " (build " .. BUILD_VERSION .. ") starting")
 
   -- Builds the nameQueue applyFn for one RDI device's Setup.xml page
   -- (PgIdx=68+dev). One response covers both the device name (<rdnam>,
@@ -1785,40 +1892,61 @@ if Controls then
   local STATUS_OK=0; local STATUS_FAULT=2
   local STATUS_MISSING=4; local STATUS_INITIALIZING=5
 
-  -- Update both the status text box and the LED indicator
-  --
-  -- This is the one place that drives Connection-category Event Logging,
-  -- but deliberately collapsed to just two logical states -- OK and
-  -- Disconnected -- not the full five-value STATUS_* range. A device that's
-  -- unreachable retries every 5s (see reconnectTmr), cycling through
-  -- Initializing/Fault/Missing repeatedly; logging each of those individually
-  -- would fill the Event Log with noise about the same underlying condition.
-  -- Per Steve: once OK is logged, no further Connection entries until a real
-  -- Disconnected; once Disconnected is logged, no repeat Disconnected
-  -- entries -- the next Connection entry is always the OK that ends it.
-  -- Concretely: Initializing/Fault/Missing are all "not OK" here, and only
-  -- the FIRST one seen after a real OK logs "Disconnected" (Log.Error);
-  -- every subsequent one is silently ignored until OK returns. Nothing is
-  -- logged for the initial connect attempt(s) before the very first OK --
-  -- there is nothing to call "Disconnected" from yet. dbg() above still
-  -- prints every individual status transition and its full message
-  -- unconditionally, so no detail is actually lost, just kept out of the
-  -- curated Event Log.
+  -- Connection-category Event Logging (v1.4.0.18): three states -- OK,
+  -- Initializing, Disconnected -- each logged only at the specific moment
+  -- it's actually EARNED, not generically off setStatus()'s value. A device
+  -- that's genuinely unreachable retries every 5s (see reconnectTmr) with
+  -- ZERO response the whole time; none of those blind attempts call this,
+  -- so nothing logs past the first Disconnected -- same noise protection
+  -- the old two-state design had. What's different: once a real response
+  -- actually arrives (a parsed RID or RST -- see their own call sites),
+  -- THAT'S proof of life worth logging as "Initializing," and it stays
+  -- logged there (repeat responses while already Initializing or OK are
+  -- deduped below) until either OK is reached or the connection is
+  -- confirmed lost again (Disconnected). Per Steve: "if we receive real
+  -- data, then we can move to initializing from Disconnected...and sit
+  -- there, until we receive an OK or stop receiving data, then we move back
+  -- to disconnected." dbg() elsewhere still prints every individual status
+  -- transition and its full message unconditionally, so no detail is ever
+  -- lost from the debug log, just kept out of the curated Event Log.
+  local function logConnTransition(newState, isError)
+    if connLogState ~= newState then
+      logEvent("Connection", newState, isError)
+      connLogState = newState
+    end
+  end
+
+  -- Update both the status text box and the LED indicator. STATUS_OK is
+  -- unambiguous proof of full population (see checkFullyPopulated()), so
+  -- it's safe to drive the "OK" log transition generically from here.
+  -- Initializing/Disconnected are NOT driven generically from `value` --
+  -- STATUS_INITIALIZING in particular fires on every bare TCP connect,
+  -- including blind retries that never get a response, so logging it here
+  -- would reintroduce exactly the flapping this design avoids. Those two
+  -- are instead logged explicitly at the specific real-data/real-failure
+  -- call sites (parseRID/parseStatusRecord for Initializing; the CAI
+  -- Closed/Error/Timeout fault path, the connect-timeout failsafes, and
+  -- STATUS_MISSING for Disconnected) -- see logConnTransition's comment.
   local function setStatus(value, msg)
     Controls.Status.String = msg
     Controls.Status.Value  = value
     Controls.Status_LED.Value         = value
     dbg("Status: " .. msg)
     if value == STATUS_OK then
-      if connLogState ~= "OK" then
-        logEvent("Connection", "OK")
-        connLogState = "OK"
-      end
-    elseif connLogState == "OK" then
-      logEvent("Connection", "Disconnected", true)
-      connLogState = "Disconnected"
+      logConnTransition("OK")
     end
   end
+  -- v1.4.0.20: a fresh "Status" Indicator control has no explicit Value in
+  -- GetControls, so its raw numeric Value silently defaults to 0 -- which
+  -- is STATUS_OK. Previously invisible because script start went straight
+  -- into connect() with no delay, so this accidental default lasted at
+  -- most a few hundred milliseconds. With the ping gate (below) able to
+  -- hold off any real connection attempt for the full Ping_Stable_Window
+  -- while a unit comes up, that same accidental default would now sit
+  -- there showing "OK" with zero connectivity for the whole wait. Explicit
+  -- initial call closes the gap -- runs synchronously at script load,
+  -- before any timer, so nothing can observe the stale default.
+  setStatus(STATUS_FAULT, "Disconnected")
 
   -- Status only reaches "OK" once every data source has responded at least
   -- once since the current connection began -- not just the first RST.
@@ -2680,6 +2808,15 @@ if Controls then
       return "Program Number changed to " .. new
     end)
     populated.rst = true
+    -- Real data received (v1.4.0.18) -- proof of life. Only actually a
+    -- transition when we were logged as Disconnected; guarded explicitly
+    -- (not left to logConnTransition's own dedup) because every routine RST
+    -- poll response during normal OK operation also reaches this line, and
+    -- "OK" ~= "Initializing" would otherwise look like a real transition
+    -- backward every single poll.
+    if connLogState == "Disconnected" then
+      logConnTransition("Initializing")
+    end
     checkFullyPopulated()
     dbg("RST: state=" .. (f[6] or "") .. " seg=" .. (f[30] or ""))
   end
@@ -2699,6 +2836,16 @@ if Controls then
     Controls.Firmware_Version.String = ver and string.format("%.3f", ver/1000) or (fields[6] or "")
     Controls.Screen_Id.String = fields[7] or ""
     populated.rid = true
+    -- A successful RID is direct proof the eCNA accepted this CAI session --
+    -- whatever caused any prior Resource Unavailable rejections is resolved,
+    -- so a future disconnect should start backoff fresh rather than
+    -- inheriting an inflated delay from this now-resolved episode.
+    reconnectBackoffIdx = 1
+    -- Real data received (v1.4.0.18) -- same guard/reasoning as parseRID's
+    -- RST-side counterpart above.
+    if connLogState == "Disconnected" then
+      logConnTransition("Initializing")
+    end
     checkFullyPopulated()
     dbg("RID: model=" .. (fields[5] or "") .. " fw=" .. (fields[6] or "") .. " screen=" .. (fields[7] or ""))
   end
@@ -2751,6 +2898,11 @@ if Controls then
       elseif f[2] == "RID"                   then parseRID(f)
       elseif f[2] == "ERR"                   then
         dbg("ERR: " .. line)
+        -- Code 998 (Resource Unavailable) is the eCNA explicitly rejecting
+        -- this CAI session -- see reconnectBackoffIdx's comment. Flagged
+        -- here; consumed by the socket's Closed/Error handler, which
+        -- follows within milliseconds per the observed logs.
+        if f[4] == "998" then lastErrWasResourceUnavailable = true end
         -- Event Log (Program category): a CAI-level error response. Gated
         -- directly on statusIsOK (not logChanged/a baseline) since each ERR
         -- is its own one-shot event, not a persisting state to compare
@@ -2763,12 +2915,138 @@ if Controls then
     end
   end
 
+  -- Ping-gated reconnect (v1.4.0.20, ported from the EXPERIMENTAL_ConnectDiag
+  -- diagnostic build -- see Enable_Ping_Gate's Properties comment for the
+  -- full rationale/history). Once a real disconnect is declared, pause ALL
+  -- CAI reconnect and HTTP traffic and instead watch for the eCNA
+  -- answering plain ICMP echo requests, which it keeps doing even while
+  -- CAI/HTTP are stalled during its own boot window. Only once ping stays
+  -- up continuously for Ping_Stable_Window seconds do we resume the real
+  -- CAI reconnect and HTTP scrape -- any dropped ping during that window
+  -- resets the stability clock back to zero rather than carrying over
+  -- partial credit. Packed as one table local (obj/timer/bootTimer/
+  -- preCheckWatchdog/active/counting/isBootWait/enabled/stableWindow as
+  -- table fields, not separate top-level locals) -- this file sits right
+  -- at Lua's 200-local-per-function ceiling (confirmed the hard way: two
+  -- more top-level locals for the enable flag and window size pushed it
+  -- over, "too many local variables" at parse time), so `enabled` and
+  -- `stableWindow` are read from Properties directly into table fields
+  -- here instead of their own top-level locals.
+  --
+  -- MUST be declared here, before sock.EventHandler -- that handler's real-
+  -- fault branch is what calls PingGate.start(), and Lua's lexical scoping
+  -- only lets a nested function capture a local as an upvalue if that
+  -- local's `local` declaration is textually earlier in an enclosing
+  -- scope. scrapeTimer has the same constraint (PingGate's stability-
+  -- window resolution calls scrapeTimer:Start()), which is why its `local`
+  -- declaration was moved up near httpSock's forward declaration, with the
+  -- Timer.New() assignment left in place down in the httpSock section --
+  -- same forward-declare-then-assign pattern used for httpSock itself.
+  -- reconnectTmr does NOT need this treatment: it's already declared well
+  -- above (before this point), so PingGate.timer.EventHandler calling
+  -- reconnectTmr:Start() is a normal, already-in-scope upvalue reference.
+  local PingGate = {
+    -- `== nil` (not `and/or`) because the default is true -- Lua's
+    -- `and/or` idiom breaks for a true default.
+    enabled      = (Properties["Enable_Ping_Gate"] == nil) or Properties["Enable_Ping_Gate"].Value,
+    stableWindow = tonumber(Properties["Ping_Stable_Window"] and Properties["Ping_Stable_Window"].Value) or 20,
+    obj        = nil,          -- Ping object; (re)created fresh each time .start() runs, since the target IP may have changed since the last gate
+    timer      = Timer.New(),  -- counts the grace-period seconds once pings are landing
+    bootTimer  = Timer.New(),  -- fires the ORIGINAL script-start bootstrap sequence (pollTimer/scrapeTimer/connect()/httpSock:Connect()) once it's actually safe to talk -- EventHandler assigned down in its natural bootstrap location, near the bottom of the file, since it needs pollTimer/scrapeTimer/connect/httpSock all in scope
+    preCheckWatchdog = Timer.New(),  -- safety net for the boot-time single-shot ping pre-check (see the `do...end` block near the bottom of the file) -- if the Q-SYS Ping object fails to invoke EITHER its EventHandler or ErrorHandler within a few seconds, this forces the gate into its normal fail-cautious watch instead so a flaky single-shot ping can't hang the whole plugin forever with zero traffic
+    active     = false,        -- true from .start() until .stop()/resolution; gates connect()'s and httpRequest()'s fault-path reconnect scheduling
+    counting   = false,        -- true once at least one successful ping has landed and the grace-period timer is running
+    isBootWait = false,        -- true when THIS gate run is the boot-time gate (script start, nothing has ever connected yet) rather than a post-fault reconnect gate -- changes what resolution actually does (fire bootTimer vs. resume reconnectTmr/scrapeTimer) and whether Status/Event Log reflect the wait (see .start()'s own comment)
+  }
+  PingGate.stop = function()
+    if PingGate.obj then PingGate.obj:stop() end
+    PingGate.timer:Stop()
+    PingGate.active     = false
+    PingGate.counting   = false
+    PingGate.isBootWait = false
+  end
+  PingGate.timer.EventHandler = function()
+    dbg("Ping gate: eCNA stable on ICMP for " .. PingGate.stableWindow .. "s -- resuming " .. (PingGate.isBootWait and "initial connect" or "normal reconnect"))
+    local wasBootWait = PingGate.isBootWait
+    PingGate.stop()
+    if wasBootWait then
+      PingGate.bootTimer:Start(0.1)   -- runs the deferred script-start bootstrap sequence
+    else
+      reconnectTmr:Start(0.1)  -- resumes the normal connect(true) path -- CAI always resumes immediately, same as the boot case
+      scrapeTimer:Start(SCRAPE_RATE)  -- resumes HTTP scrape, paused for the duration of the gate
+    end
+  end
+  -- Returns true if a gate is (now, or already) active -- caller should NOT
+  -- also schedule a normal reconnectTmr retry (or, for the boot case, the
+  -- normal bootstrap sequence) in that case. Returns false (feature off, or
+  -- no valid IP to ping) so the caller falls back to proceeding immediately
+  -- instead of stranding the plugin with nothing watching for recovery at
+  -- all. `isBoot`, when true, marks this as the boot-time gate -- see the
+  -- boot-time ping gate at the bottom of the file for why that path exists
+  -- and how it differs from a post-fault reconnect gate: per Steve's bench
+  -- research (traced all the way back to the ORIGINAL vendor "WEB" script,
+  -- confirming this predates any version of this plugin), talking to the
+  -- eCNA within roughly 10s of its first ICMP response during its own boot
+  -- sequence can wedge its web UI -- waiting Ping_Stable_Window seconds
+  -- after that first response measurably reduces both how often that
+  -- happens and how long it lasts when it still does. Also flips Status/
+  -- Event Log to "Initializing" the moment that first ping lands, in the
+  -- boot case only, per Steve's request ("it will indicate we are doing
+  -- something to the user, and in the log") -- the reconnect case
+  -- deliberately leaves Status showing Fault/Disconnected through this
+  -- same wait, unchanged from before, since "Initializing" there is
+  -- reserved for the real CAI reconnect actually succeeding (see
+  -- connect()'s own isAutoRetry comment).
+  PingGate.start = function(isBoot)
+    if not PingGate.enabled then return false end
+    if PingGate.active then return true end  -- already gating this same outage; both the CAI and HTTP fault paths can call this for the same underlying disconnect
+    local ip = Controls.IP_ADDRESS.String
+    if not isValidIP(ip) then return false end
+    PingGate.active     = true
+    PingGate.counting   = false
+    PingGate.isBootWait = isBoot or false
+    dbg("Ping gate: pausing " .. (PingGate.isBootWait and "initial connect" or "CAI reconnect + ALL HTTP traffic") .. ", watching ICMP for " .. ip .. " before " .. (PingGate.isBootWait and "contacting it" or "reconnecting"))
+    PingGate.obj = Ping.New(ip)
+    PingGate.obj:setPingInterval(2)  -- 2s, per Steve's choice
+    PingGate.obj.EventHandler = function()
+      if not PingGate.active then return end  -- stray response after the gate already resolved/cancelled
+      if not PingGate.counting then
+        PingGate.counting = true
+        dbg("Ping gate: ICMP reply received, starting " .. PingGate.stableWindow .. "s grace period before " .. (PingGate.isBootWait and "any contact" or "reconnecting"))
+        if PingGate.isBootWait then
+          -- Boot case only (see this function's own comment) -- the device
+          -- is physically present, so this is genuine proof-of-life worth
+          -- surfacing, even though we haven't attempted CAI/HTTP yet.
+          setStatus(STATUS_INITIALIZING, "Initializing (device found, waiting " .. PingGate.stableWindow .. "s before contacting)")
+          logConnTransition("Initializing")
+        end
+        PingGate.timer:Start(PingGate.stableWindow)
+      end
+    end
+    PingGate.obj.ErrorHandler = function()
+      if not PingGate.active then return end
+      if PingGate.counting then
+        dbg("Ping gate: ICMP reply missed mid-window, resetting grace period")
+        PingGate.counting = false
+        PingGate.timer:Stop()
+      end
+    end
+    PingGate.obj:start(false)  -- repeating, not single-shot
+    return true
+  end
+
   -- ── CAI TCP Socket Handler ──────────────────────────────────
   -- Manages connection state and incoming data buffering
   sock.EventHandler = function(sock, evt, err)
     if evt == TcpSocket.Events.Connected then
       isConnected = true
       connecting  = false
+      -- Staleness guard for the backoff flag (v1.4.0.14): a fresh TCP-level
+      -- connect is starting a brand new attempt, so any leftover flag from
+      -- a previous attempt's ERR response is no longer meaningful here.
+      -- Normally already false by this point (cleared when the prior
+      -- disconnect was handled) -- this just removes any doubt.
+      lastErrWasResourceUnavailable = false
       -- The raw TCP handshake succeeding doesn't mean we have real, current
       -- data yet (RID/RST/names/etc. below still have to arrive) -- but it
       -- IS genuine progress, and worth showing as such, rather than
@@ -2789,6 +3067,25 @@ if Controls then
       sendCmd("CFG,"..nextPSN()..",RPTON,N")
       -- Fetch both name pages (and dimmer setup, if QDC enabled) once on connect.
       Timer.CallAfter(function()
+        -- Clear before repopulating (v1.4.0.13). Every TCP-level Connected
+        -- event reaches this same callback, including ones where the eCNA
+        -- immediately rejects RID/CFG (RSP,ERR,...,998,Resource
+        -- Unavailable) -- e.g. during the ~60-70s window seen right after
+        -- an eCNA power cycle, where the CAI socket reconnects roughly
+        -- every 5s (reconnectTmr) while the eCNA is still settling. Without
+        -- this clear, each of those failed attempts appended another full
+        -- batch on top of whatever was still queued from the previous one,
+        -- so the HTTP side kept firing a fresh name-fetch request every
+        -- ~1.3-1.6s continuously for the entire lockout -- on top of the 5s
+        -- CAI retries -- regardless of the eCNA having just told us it had
+        -- no spare resource to give. This doesn't fix why the eCNA rejects
+        -- reconnects after a power cycle in the first place (that looks
+        -- like the eCNA's own boot behavior, not something in our
+        -- control), but it stops the plugin from piling on unnecessary
+        -- HTTP load while that is happening. macroNameQueue gets the same
+        -- treatment for the same reason, even though it is lower priority.
+        nameQueue = {}
+        macroNameQueue = {}
         table.insert(nameQueue, {"/Setup.xml?PgIdx=75", applyInputNames})   -- inputs
         table.insert(nameQueue, {"/Setup.xml?PgIdx=74", applyOutputNames})  -- outputs
         if ENABLE_QDC then
@@ -2844,7 +3141,14 @@ if Controls then
       end
     elseif evt == TcpSocket.Events.Closed
         or evt == TcpSocket.Events.Reconnect
-        or evt == TcpSocket.Events.Error then
+        or evt == TcpSocket.Events.Error
+        or evt == TcpSocket.Events.Timeout then
+      -- Timeout (v1.4.0.16): distinct from Error in the TcpSocket API, and
+      -- previously unhandled here -- meant sock.ReadTimeout (added this same
+      -- build) would silently close the socket with nothing reacting to it.
+      -- Routed into the same branch as Closed/Reconnect/Error since a
+      -- read-timeout-triggered close is just as much a real disconnection as
+      -- any other -- same Fault/backoff/reconnect handling applies.
       isConnected = false
       connecting  = false
       if intentionalDisconnect then
@@ -2855,6 +3159,7 @@ if Controls then
         -- status or schedule a redundant 5s retry on top of the reconnect
         -- that's already happening.
         intentionalDisconnect = false
+        lastErrWasResourceUnavailable = false  -- not a real rejection reaction; don't let a stray flag leak into a later unrelated disconnect
         dbg("Disconnected as part of our own reconnect -- not a fault")
       elseif reconnectScheduled then
         -- We already reacted to a failure for this outstanding attempt
@@ -2865,12 +3170,51 @@ if Controls then
         -- every time one of these arrives, causing
         -- Initializing/Disconnected/Disconnected flapping against a
         -- genuinely unreachable IP.
+        lastErrWasResourceUnavailable = false  -- redundant echo of the same failure; already accounted for when the real one was handled
         dbg("Redundant disconnect notification while a retry is already pending -- ignored")
       else
         reconnectScheduled = true
         setStatus(STATUS_FAULT, (err and err ~= "") and ("Disconnected: "..err) or "Disconnected")
+        -- Real failure (v1.4.0.18): this branch only runs once per genuine
+        -- outstanding disconnect (guarded by reconnectScheduled above, same
+        -- as always) -- exactly the "stop receiving data" half of Steve's
+        -- rule.
+        logConnTransition("Disconnected", true)
         pollTimer:Stop()
-        reconnectTmr:Start(5)  -- retry connection after 5 seconds
+        -- Backoff (v1.4.0.14): widen the retry gap after the eCNA has
+        -- explicitly rejected us with Resource Unavailable, instead of
+        -- retrying at a flat 5s regardless of what it just told us. Any
+        -- OTHER disconnect reason resets straight back to the fast 5s
+        -- retry -- this is specifically about not hammering a device that
+        -- just said it has no session to give, not about being generally
+        -- more cautious after every disconnect.
+        local wasResourceUnavailable = lastErrWasResourceUnavailable  -- captured before the flag is cleared below (v1.4.0.20: needed again for the ping-gate skip check just below)
+        if lastErrWasResourceUnavailable then
+          reconnectBackoffIdx = math.min(reconnectBackoffIdx + 1, #RECONNECT_BACKOFF_STEPS)
+        else
+          reconnectBackoffIdx = 1
+        end
+        lastErrWasResourceUnavailable = false
+        local delay = RECONNECT_BACKOFF_STEPS[reconnectBackoffIdx]
+        -- Ping gate (v1.4.0.20): a Resource-Unavailable rejection means the
+        -- eCNA's CAI session manager isn't ready yet -- it says nothing
+        -- about ICMP, which has been fine the whole time (we only got this
+        -- far because a prior ping-gate wait already proved it, or the
+        -- gate is off). Re-arming the full gate wait here just adds
+        -- another Ping_Stable_Window seconds of pure latency for no added
+        -- safety -- ICMP was never in question. Skip straight to the
+        -- normal backed-off retry in that case. Otherwise, if the gate is
+        -- enabled, PingGate.start() takes over entirely (pausing CAI
+        -- reconnect + ALL HTTP traffic until ICMP proves stable) and the
+        -- normal backoff retry below is skipped; falls through to the
+        -- normal retry if the gate declines (feature off or no valid IP).
+        if wasResourceUnavailable then
+          dbg("Resource Unavailable -- ICMP never dropped, skipping ping-gate re-wait -- reconnecting in " .. delay .. "s (backed off)")
+          reconnectTmr:Start(delay)
+        elseif not PingGate.start() then
+          dbg("Reconnecting in " .. delay .. "s" .. (reconnectBackoffIdx > 1 and " (backed off after Resource Unavailable)" or ""))
+          reconnectTmr:Start(delay)
+        end
       end
     end
   end
@@ -2915,15 +3259,33 @@ if Controls then
     if not port or port < 1 then port = TCP_PORT end
     if not isValidIP(ip) then
       setStatus(STATUS_MISSING, ip and #ip > 0 and "Invalid IP address" or "Missing")
+      -- v1.4.0.18: an invalid/missing IP is just as much "not connected" as
+      -- any other fault -- logConnTransition's own dedup keeps this a no-op
+      -- if we were already logged as Disconnected.
+      logConnTransition("Disconnected", true)
       return
     end
 
     connectingGen = connectingGen + 1
     local myGen = connectingGen
-    -- CAI-side only -- see resetCaiPopulationTracking's comment.
-    -- A CAI reconnect (this function) doesn't invalidate already-fresh
-    -- HTTP-side data; only resetForNewTarget() (an actual IP change) does.
-    resetCaiPopulationTracking()
+    -- Full reset, both CAI and HTTP sides (v1.4.0.17; previously CAI-only --
+    -- see the removed resetCaiPopulationTracking comment this replaces).
+    -- That earlier design let a CAI-only reconnect keep already-fresh
+    -- HTTP-side flags (names/scrape/QDC/nanoHost) rather than re-earning
+    -- them, specifically to avoid re-paying the HTTP fetch cost when only
+    -- the CAI side had hiccuped. In the field this meant OK could reappear
+    -- within a few hundred ms of a bare RID/RST success, off HTTP flags
+    -- left over from BEFORE the disconnect -- not anything freshly
+    -- reconfirmed since this reconnect began. Per Steve: "OK should always
+    -- mean that all flags are correct (to within the last refresh timing)"
+    -- -- a reconnect (of either channel) must always pass back through
+    -- Initializing and actually repopulate before OK is allowed again, full
+    -- stop. On this project's bench config (QDC/nanoHost both off) this
+    -- costs about 3s (In+Out name fetch) on top of RID/RST, not the "tens
+    -- of seconds" the old design was guarding against -- RDI/macro names
+    -- remain excluded from this gate either way (pure log decoration, see
+    -- checkFullyPopulated()).
+    resetPopulationTracking()
     if not isAutoRetry then
       setStatus(STATUS_INITIALIZING, "Initializing")
     end
@@ -2954,8 +3316,16 @@ if Controls then
           if not reconnectScheduled then
             reconnectScheduled = true
             setStatus(STATUS_FAULT, "Connect timed out")
+            -- v1.4.0.18: 10s with zero response at all is a real failure,
+            -- same as the Closed/Error/Timeout path's own Disconnected log.
+            logConnTransition("Disconnected", true)
             pollTimer:Stop()
-            reconnectTmr:Start(5)
+            -- Ping gate (v1.4.0.20): same fallback pattern as the real
+            -- Closed/Error/Timeout branch above -- if the gate declines,
+            -- fall through to the normal 5s retry.
+            if not PingGate.start() then
+              reconnectTmr:Start(5)
+            end
           end
         end
       end, 10)
@@ -2995,6 +3365,7 @@ if Controls then
   -- would otherwise get sent, with top priority, to whatever unit we
   -- connect to next.
   Controls.IP_ADDRESS.EventHandler = function()
+    PingGate.stop()  -- v1.4.0.20: a new target invalidates any gate watching the OLD IP
     resetForNewTarget()
     if Controls.TCP_PORT.String == "" then
       Controls.TCP_PORT.String = tostring(TCP_PORT)
@@ -3006,7 +3377,10 @@ if Controls then
     if httpSock and isValidIP(ip) then httpSock:Connect(ip, 80) end
   end
 
-  Controls.Reconnect.EventHandler = function() connect() end
+  Controls.Reconnect.EventHandler = function()
+    PingGate.stop()  -- v1.4.0.20: manual Reconnect is an explicit operator override -- don't leave a gate quietly watching in the background
+    connect()
+  end
 
   -- Single consolidated refresh: re-fetches everything that's normally
   -- only fetched once at connect. Queued in order at the FRONT of nameQueue so
@@ -3608,12 +3982,47 @@ if Controls then
   httpSock            = TcpSocket.New()  -- assigns to forward-declared upvalue
   local httpBuf       = ""
   local httpConnected = false
-  local scrapeTimer   = Timer.New()
+  scrapeTimer         = Timer.New()  -- assigns to forward-declared upvalue (see its own comment above)
+  -- Fast-fail via HTTP scrape (v1.4.0.17): the CAI side can take up to
+  -- POLL_RATE+10s (55s at the 45s default) to notice a genuinely dead
+  -- connection via sock.ReadTimeout -- but HTTP requests fire far more
+  -- often (SCRAPE_RATE, default 2s), so a real outage shows up here first.
+  -- Counts consecutive HTTP request cycles that came back completely empty
+  -- (buf=0 -- the eCNA's web server gave us nothing at all), across every
+  -- request type, not just SCRAPE, since any of them failing is equally
+  -- valid evidence the HTTP interface is unresponsive. Reset to 0 on any
+  -- request that gets real bytes back, so an isolated blip can't
+  -- accumulate toward the threshold -- matches Steve's "one bad response
+  -- isn't disconnected, but zero response for a while is" principle,
+  -- applied to this channel the same way sock.ReadTimeout applies it to
+  -- CAI. At HTTP_FAIL_THRESHOLD consecutive failures, forces the CAI
+  -- socket closed (see the escalation call below) so both channels
+  -- restart together through the normal Fault/backoff/reconnect path,
+  -- instead of waiting on CAI's own much slower detection.
+  local consecutiveHttpFailures = 0
+  local HTTP_FAIL_THRESHOLD = 3
   -- Generation counter for the HTTP connect failsafe below -- bumped on
   -- every httpSock:Connect() attempt so a stale 10s timeout from a
   -- superseded attempt can't wrongly act on a newer one. Mirrors
   -- connectingGen on the CAI socket.
   local httpConnectingGen = 0
+
+  -- Escalation for the fast-fail counter above: forces the CAI socket
+  -- closed so the existing Closed/Reconnect/Error/Timeout handling (Fault
+  -- status, backoff, reconnectTmr, and -- as of this same build -- the full
+  -- population reset in connect()) takes over, rather than duplicating any
+  -- of that logic here. No-op if CAI doesn't currently think it's
+  -- connected -- nothing useful to force closed, and it's presumably
+  -- already reconnecting on its own. Deliberately does NOT set
+  -- intentionalDisconnect first -- this needs to be treated as a genuine
+  -- fault, not our own expected teardown.
+  local function declareHttpDrivenDisconnect()
+    consecutiveHttpFailures = 0  -- avoid re-triggering on every failure past the threshold
+    if isConnected then
+      dbg("HTTP scrape failed " .. HTTP_FAIL_THRESHOLD .. "x in a row -- forcing CAI reconnect")
+      sock:Disconnect()
+    end
+  end
 
   -- Send HTTP GET, tagging currentReqType so the Closed handler knows
   -- which parser to route the response to.
@@ -3699,7 +4108,17 @@ if Controls then
         if not httpConnected and httpConnectingGen == myHttpGen then
           dbg("HTTP connect attempt did not resolve within 10s, treating as failed")
           httpBusy = false
-          scrapeTimer:Start(SCRAPE_RATE)
+          consecutiveHttpFailures = consecutiveHttpFailures + 1
+          if consecutiveHttpFailures >= HTTP_FAIL_THRESHOLD then
+            declareHttpDrivenDisconnect()
+          end
+          -- Ping gate (v1.4.0.20): don't resume scrape if a gate is now
+          -- active (declareHttpDrivenDisconnect() above may have just
+          -- triggered one via the CAI Closed/Error path) -- PingGate's own
+          -- stable-window resolution restarts scrapeTimer once it's safe.
+          if not PingGate.active then
+            scrapeTimer:Start(SCRAPE_RATE)
+          end
         end
       end, 10)
       httpSock:Connect(ip, 80)
@@ -4795,6 +5214,7 @@ if Controls then
     routineTicks     = 0  -- fresh target restarts the LIGHTPOLL countdown from zero
     nanoTicks        = 0  -- fresh target restarts the NANOHOST countdown from zero
     macroTicks       = 0  -- fresh target restarts the macro-name-fetch countdown from zero
+    consecutiveHttpFailures = 0  -- fresh target restarts the fast-fail streak from zero (v1.4.0.17)
 
     -- Learned dimmer configuration/state -- all specific to whichever unit
     -- we were last actually talking to
@@ -5237,6 +5657,19 @@ if Controls then
       httpConnected = false
       httpBusy      = false
       dbg("HTTP Closed: buf=" .. #httpBuf .. " bytes, currentReqType=" .. currentReqType)
+      -- Fast-fail counter (v1.4.0.17): any real bytes back proves the HTTP
+      -- interface answered, regardless of request type -- reset the streak.
+      -- Zero bytes is a genuine miss; count it, and escalate at threshold.
+      -- See consecutiveHttpFailures'/declareHttpDrivenDisconnect's own
+      -- comments above for the full reasoning.
+      if #httpBuf > 0 then
+        consecutiveHttpFailures = 0
+      else
+        consecutiveHttpFailures = consecutiveHttpFailures + 1
+        if consecutiveHttpFailures >= HTTP_FAIL_THRESHOLD then
+          declareHttpDrivenDisconnect()
+        end
+      end
       if #httpBuf > 0 then
         local bodyStart = httpBuf:find("\r\n\r\n")
         if not bodyStart then bodyStart = httpBuf:find("\n\n") end
@@ -5266,8 +5699,13 @@ if Controls then
         end
         httpBuf = ""
       end
-      -- Restart scrapeTimer from NOW so interval is measured from end of response
-      scrapeTimer:Start(SCRAPE_RATE)
+      -- Restart scrapeTimer from NOW so interval is measured from end of response.
+      -- Ping gate (v1.4.0.20): skip the restart if a gate just went active
+      -- (declareHttpDrivenDisconnect() above may have triggered one) --
+      -- PingGate's own stable-window resolution restarts it once it's safe.
+      if not PingGate.active then
+        scrapeTimer:Start(SCRAPE_RATE)
+      end
     end
   end
 
@@ -5364,11 +5802,81 @@ if Controls then
       Controls.NanoHost_LastShowStartOffset_Text.String = tostring(math.floor((Controls.NanoHost_LastShowStartOffset.Value or 0) + 0.5))
     end
   end
-  pollTimer:Start(POLL_RATE)
-  scrapeTimer:Start(SCRAPE_RATE)
-  connect()
-  local ip = Controls.IP_ADDRESS.String
-  if httpSock and isValidIP(ip) then httpSock:Connect(ip, 80) end
-  dbg("Plugin started. port=" .. TCP_PORT)
+  -- Boot-time ping gate (v1.4.0.20): this used to just call connect() and
+  -- httpSock:Connect() directly at script start, same as it does for the
+  -- fast path below. Per Steve's bench research (traced back to the
+  -- ORIGINAL vendor "WEB" script -- this predates any of our plugin
+  -- versions), talking to the eCNA within roughly 10s of its first ICMP
+  -- response during its own boot sequence can wedge its web UI; waiting
+  -- Ping_Stable_Window seconds after that first response measurably
+  -- reduces both how often that happens and how long it lasts when it
+  -- still does. Special-cased so a unit that's ALREADY up when the plugin
+  -- starts -- the common case, eCNA was never power-cycled -- pays no
+  -- delay at all: a single-shot ping checks this once; if it succeeds
+  -- immediately, boot proceeds exactly as before (fires PingGate.bootTimer
+  -- right away). Only if that first check fails (eCNA not yet responding
+  -- -- we're genuinely watching it come up) does PingGate.start(true)
+  -- engage its normal repeating-ping + grace-period flow, whose resolution
+  -- fires bootTimer instead of the reconnect path (see
+  -- PingGate.timer.EventHandler's isBootWait branch).
+  PingGate.bootTimer.EventHandler = function()
+    -- Q-SYS Timer:Start(seconds) repeats automatically, same as
+    -- reconnectTmr/scrapeTimer elsewhere in this file -- without this
+    -- explicit Stop() (the same pattern reconnectTmr.EventHandler already
+    -- uses), this handler would refire every 0.1s forever.
+    PingGate.bootTimer:Stop()
+    pollTimer:Start(POLL_RATE)
+    connect()
+    scrapeTimer:Start(SCRAPE_RATE)
+    local ip = Controls.IP_ADDRESS.String
+    if httpSock and isValidIP(ip) then httpSock:Connect(ip, 80) end
+    dbg("Plugin started. port=" .. TCP_PORT)
+  end
+  -- Safety net for the boot-time single-shot ping pre-check below.
+  -- PingGate.bootTimer (the ONLY thing that starts pollTimer/connect()/
+  -- HTTP) is only ever fired from inside PingGate.obj's EventHandler or
+  -- ErrorHandler below; if the Q-SYS Ping component's single-shot
+  -- start(true) fails to invoke either callback, the plugin would
+  -- otherwise hang forever with no traffic at all. This timer is started
+  -- right alongside the pre-check ping and stopped by whichever of
+  -- EventHandler/ErrorHandler actually fires first; if 5s passes with
+  -- neither having fired, this steps in so a flaky single-shot ping can't
+  -- brick startup indefinitely. Fails CAUTIOUS, not fast: "neither
+  -- callback fired within 5s" does NOT mean the eCNA is safely up -- it
+  -- could just as easily mean the eCNA is powering on RIGHT NOW, racing
+  -- this watchdog -- so this falls through to the same PingGate.start(true)
+  -- path as a real failed pre-check (wait for a real ping, then the full
+  -- grace period) rather than skipping straight to bootTimer.
+  PingGate.preCheckWatchdog.EventHandler = function()
+    PingGate.preCheckWatchdog:Stop()
+    dbg("Ping gate: boot ping pre-check produced neither a response nor a timeout within 5s -- treating as not-yet-up (fail cautious) so we don't risk skipping the grace period on a device that's mid-boot right now")
+    if PingGate.obj then PingGate.obj:stop() end
+    PingGate.start(true)
+  end
+  do
+    local ip = Controls.IP_ADDRESS.String
+    if PingGate.enabled and isValidIP(ip) then
+      PingGate.obj = Ping.New(ip)
+      PingGate.obj:setPingInterval(2)
+      PingGate.obj.EventHandler = function()
+        PingGate.preCheckWatchdog:Stop()
+        dbg("Ping gate: eCNA already responding to ICMP at startup -- no boot delay needed")
+        PingGate.bootTimer:Start(0.1)
+      end
+      PingGate.obj.ErrorHandler = function()
+        PingGate.preCheckWatchdog:Stop()  -- pre-check worked (told us "not up yet"), so this isn't a hang; PingGate.start(true) now owns its own longer-running watch
+        dbg("Ping gate: eCNA not yet responding to ICMP -- waiting for it to come up before any contact")
+        PingGate.start(true)  -- boot mode: waits for the first successful ping, then the full grace period, before bootTimer fires
+      end
+      PingGate.preCheckWatchdog:Start(5)
+      PingGate.obj:start(true)  -- single-shot pre-check, not the repeating watch PingGate.start() uses
+    else
+      -- Feature off, or no valid IP yet at script start (common -- IP is
+      -- often entered after the component is placed; IP_ADDRESS.EventHandler
+      -- drives the first real connect once one is entered, unaffected by
+      -- this boot gate by design -- see its own comment).
+      PingGate.bootTimer:Start(0.1)
+    end
+  end
 
 end  -- if Controls
