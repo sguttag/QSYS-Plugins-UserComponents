@@ -1,11 +1,13 @@
 Eprad eCNA Plugin Release Notes
 
-Beta Version 1.4 (build 20)
+Beta Version 1.4 (build 28)
 
 Added Logging (to Core's Event Log).  Logging must be enabled in Properties
 as well as on the Logging page and then each type of event to log.  
 
 Added some connection mitigation strategies (PingGate, default 20-seconds).  
+
+Improved "Reconnect" handling.
 
 Version 1.3.1 (build 66)
 
