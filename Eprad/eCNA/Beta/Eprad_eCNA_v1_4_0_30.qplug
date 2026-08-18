@@ -42,9 +42,9 @@
 -- test_no_apostrophes.lua before any build ships.
 
 PluginInfo = {
-  Name         = "Eprad~eCNA v1.4.0.28",
+  Name         = "Eprad~eCNA v1.4.0.30",
   Manufacturer = "STG",
-  Version      = "1.4.0.28",
+  Version      = "1.4.0.30",
   Id           = "8cd1a925-90ba-4640-8de9-886632d1e242",
   Description  = "Controls the Eprad eCNA Cinema Automation system via the CAI ASCII TCP interface, with optional Eprad QDC dimmer lighting monitoring/control, optional Eprad nanoHost POS management data display, and optional Event Logging to Core Manager.",
   ShowDebug    = true,
@@ -57,7 +57,7 @@ PluginInfo = {
 -- which is the clean outward-facing release version. Beta builds keep all
 -- four version places identical in both -- the clean/internal split only
 -- happens at an actual numbered release, as 1.3.0 did at build 65.
-local BUILD_VERSION = "1.4.0.28"
+local BUILD_VERSION = "1.4.0.30"
 
 function GetColor(props)
   return { 72, 147, 217 }
@@ -196,6 +196,16 @@ function GetControls(props)
   table.insert(ctrls, { Name="Dig2_Power",    ControlType="Button", Count=1, UserPin=true, PinStyle="Both", ButtonType="Toggle", Description="Dig Proj2 Power" })
   table.insert(ctrls, { Name="Dig2_Video",    ControlType="Button", Count=1, UserPin=true, PinStyle="Both", ButtonType="Toggle", Description="Dig Proj2 Video" })
   table.insert(ctrls, { Name="Aux_Projector", ControlType="Button", Count=1, UserPin=true, PinStyle="Both", ButtonType="Toggle", Description="Slide Projector" })
+
+  -- v1.4.0.29: alternate Event Log names for the 4 Digital Projector
+  -- Power/Video flags, live on the Event Log page (Categories section).
+  -- Blank = use the default label ("Dig Proj1 Power" etc.) -- these do NOT
+  -- rename the buttons themselves anywhere else, only the text used in
+  -- Event Log messages when the flag changes state.
+  table.insert(ctrls, { Name="Dig1_Power_Name", ControlType="Text", Count=1, UserPin=true, PinStyle="Input", Description="Alternate Event Log name for Dig Proj1 Power (blank = default)" })
+  table.insert(ctrls, { Name="Dig1_Video_Name", ControlType="Text", Count=1, UserPin=true, PinStyle="Input", Description="Alternate Event Log name for Dig Proj1 Video (blank = default)" })
+  table.insert(ctrls, { Name="Dig2_Power_Name", ControlType="Text", Count=1, UserPin=true, PinStyle="Input", Description="Alternate Event Log name for Dig Proj2 Power (blank = default)" })
+  table.insert(ctrls, { Name="Dig2_Video_Name", ControlType="Text", Count=1, UserPin=true, PinStyle="Input", Description="Alternate Event Log name for Dig Proj2 Video (blank = default)" })
 
   -- Aux digital outputs 1-16 (Toggle - state driven by scrape)
   table.insert(ctrls, { Name="Aux_Out", ControlType="Button", Count=16, UserPin=true, PinStyle="Both", ButtonType="Toggle", Description="Aux Outputs 1-16" })
@@ -1312,6 +1322,30 @@ function GetControlLayout(props)
 
     hdr(y, 'Categories', 16)
     y = y + 24
+
+    -- v1.4.0.29: DP1/DP2 Power/Video alternate Event Log names, placed in
+    -- the unused right-hand space of the Categories section (runs in
+    -- parallel with the Connection/Inputs/Outputs/Program rows on the
+    -- left via its own y2 counter, doesn't touch the left column's y).
+    -- Blank = use the default label; these don't rename the buttons
+    -- themselves anywhere else, only Event Log message text.
+    do
+      local RLX, RFX, RW = 340, 434, 150
+      local y2 = y
+      lbl(RLX, y2, 90, 'DP1 Power:', 12)
+      layout["Dig1_Power_Name"] = { PrettyName="Event Log~DP1 Power Name", Style="Text", Position={RFX,y2}, Size={RW,22} }
+      y2 = y2 + 26
+      lbl(RLX, y2, 90, 'DP1 Video:', 12)
+      layout["Dig1_Video_Name"] = { PrettyName="Event Log~DP1 Video Name", Style="Text", Position={RFX,y2}, Size={RW,22} }
+      y2 = y2 + 26
+      lbl(RLX, y2, 90, 'DP2 Power:', 12)
+      layout["Dig2_Power_Name"] = { PrettyName="Event Log~DP2 Power Name", Style="Text", Position={RFX,y2}, Size={RW,22} }
+      y2 = y2 + 26
+      lbl(RLX, y2, 90, 'DP2 Video:', 12)
+      layout["Dig2_Video_Name"] = { PrettyName="Event Log~DP2 Video Name", Style="Text", Position={RFX,y2}, Size={RW,22} }
+      y2 = y2 + 26
+      textlbl(RLX, y2, RFX+RW-RLX, 'Alternate names for the Event Log (blank = default).', 10)
+    end
 
     lbl(LX, y, 115, 'Connection:', 14)
     layout["Log_Enable_Connection"] = { PrettyName="Event Log~Connection", Style="Button", ButtonStyle="Toggle", Legend="Log Connection", Position={FX,y}, Size={160,22} }
@@ -2803,10 +2837,10 @@ if Controls then
     -- (periodic, reactive, or the one-time post-connect poll) authoritatively
     -- sets these 4 -- see scrape() for the mismatch-correction backstop.
     if #f >= 16 then
-      setBoolLogged(Controls.Dig1_Power, "Dig1_Power", "Dig Proj1 Power", (f[10] == "D1P"))
-      setBoolLogged(Controls.Dig1_Video, "Dig1_Video", "Dig Proj1 Video", (f[12] == "D1V"))
-      setBoolLogged(Controls.Dig2_Power, "Dig2_Power", "Dig Proj2 Power", (f[14] == "D2P"))
-      setBoolLogged(Controls.Dig2_Video, "Dig2_Video", "Dig Proj2 Video", (f[16] == "D2V"))
+      setBoolLogged(Controls.Dig1_Power, "Dig1_Power", (Controls.Dig1_Power_Name.String ~= "" and Controls.Dig1_Power_Name.String or "Dig Proj1 Power"), (f[10] == "D1P"))
+      setBoolLogged(Controls.Dig1_Video, "Dig1_Video", (Controls.Dig1_Video_Name.String ~= "" and Controls.Dig1_Video_Name.String or "Dig Proj1 Video"), (f[12] == "D1V"))
+      setBoolLogged(Controls.Dig2_Power, "Dig2_Power", (Controls.Dig2_Power_Name.String ~= "" and Controls.Dig2_Power_Name.String or "Dig Proj2 Power"), (f[14] == "D2P"))
+      setBoolLogged(Controls.Dig2_Video, "Dig2_Video", (Controls.Dig2_Video_Name.String ~= "" and Controls.Dig2_Video_Name.String or "Dig Proj2 Video"), (f[16] == "D2V"))
       dpMismatch[1] = 0; dpMismatch[2] = 0; dpMismatch[3] = 0; dpMismatch[4] = 0
     end
     -- Note: Aux_Projector (Slide Projector, "SLD" on this hardware rather
@@ -2889,14 +2923,14 @@ if Controls then
   local function parseRPTEVT(fields)
     local evt = fields[4] or ""
     dbg("RPT EVT: " .. evt)
-    if     evt == "DP1ON"  then setBoolLogged(Controls.Dig1_Power, "Dig1_Power", "Dig Proj1 Power", true);  dpMismatch[1] = 0
-    elseif evt == "DP1OFF" then setBoolLogged(Controls.Dig1_Power, "Dig1_Power", "Dig Proj1 Power", false); dpMismatch[1] = 0
-    elseif evt == "DV1ON"  then setBoolLogged(Controls.Dig1_Video, "Dig1_Video", "Dig Proj1 Video", true);  dpMismatch[2] = 0
-    elseif evt == "DV1OFF" then setBoolLogged(Controls.Dig1_Video, "Dig1_Video", "Dig Proj1 Video", false); dpMismatch[2] = 0
-    elseif evt == "DP2ON"  then setBoolLogged(Controls.Dig2_Power, "Dig2_Power", "Dig Proj2 Power", true);  dpMismatch[3] = 0
-    elseif evt == "DP2OFF" then setBoolLogged(Controls.Dig2_Power, "Dig2_Power", "Dig Proj2 Power", false); dpMismatch[3] = 0
-    elseif evt == "DV2ON"  then setBoolLogged(Controls.Dig2_Video, "Dig2_Video", "Dig Proj2 Video", true);  dpMismatch[4] = 0
-    elseif evt == "DV2OFF" then setBoolLogged(Controls.Dig2_Video, "Dig2_Video", "Dig Proj2 Video", false); dpMismatch[4] = 0
+    if     evt == "DP1ON"  then setBoolLogged(Controls.Dig1_Power, "Dig1_Power", (Controls.Dig1_Power_Name.String ~= "" and Controls.Dig1_Power_Name.String or "Dig Proj1 Power"), true);  dpMismatch[1] = 0
+    elseif evt == "DP1OFF" then setBoolLogged(Controls.Dig1_Power, "Dig1_Power", (Controls.Dig1_Power_Name.String ~= "" and Controls.Dig1_Power_Name.String or "Dig Proj1 Power"), false); dpMismatch[1] = 0
+    elseif evt == "DV1ON"  then setBoolLogged(Controls.Dig1_Video, "Dig1_Video", (Controls.Dig1_Video_Name.String ~= "" and Controls.Dig1_Video_Name.String or "Dig Proj1 Video"), true);  dpMismatch[2] = 0
+    elseif evt == "DV1OFF" then setBoolLogged(Controls.Dig1_Video, "Dig1_Video", (Controls.Dig1_Video_Name.String ~= "" and Controls.Dig1_Video_Name.String or "Dig Proj1 Video"), false); dpMismatch[2] = 0
+    elseif evt == "DP2ON"  then setBoolLogged(Controls.Dig2_Power, "Dig2_Power", (Controls.Dig2_Power_Name.String ~= "" and Controls.Dig2_Power_Name.String or "Dig Proj2 Power"), true);  dpMismatch[3] = 0
+    elseif evt == "DP2OFF" then setBoolLogged(Controls.Dig2_Power, "Dig2_Power", (Controls.Dig2_Power_Name.String ~= "" and Controls.Dig2_Power_Name.String or "Dig Proj2 Power"), false); dpMismatch[3] = 0
+    elseif evt == "DV2ON"  then setBoolLogged(Controls.Dig2_Video, "Dig2_Video", (Controls.Dig2_Video_Name.String ~= "" and Controls.Dig2_Video_Name.String or "Dig Proj2 Video"), true);  dpMismatch[4] = 0
+    elseif evt == "DV2OFF" then setBoolLogged(Controls.Dig2_Video, "Dig2_Video", (Controls.Dig2_Video_Name.String ~= "" and Controls.Dig2_Video_Name.String or "Dig Proj2 Video"), false); dpMismatch[4] = 0
     end
     if evt=="START" or evt=="IDLE"    or evt=="ALLSTOP"
     or evt=="DP1ON" or evt=="DP1OFF"  or evt=="DV1ON"  or evt=="DV1OFF"
@@ -4637,10 +4671,10 @@ if Controls then
         end
       end
     end
-    scrapeCorrectDP(1, Controls.Dig1_Power, "Dig1_Power", "Dig Proj1 Power")
-    scrapeCorrectDP(2, Controls.Dig1_Video, "Dig1_Video", "Dig Proj1 Video")
-    scrapeCorrectDP(3, Controls.Dig2_Power, "Dig2_Power", "Dig Proj2 Power")
-    scrapeCorrectDP(4, Controls.Dig2_Video, "Dig2_Video", "Dig Proj2 Video")
+    scrapeCorrectDP(1, Controls.Dig1_Power, "Dig1_Power", (Controls.Dig1_Power_Name.String ~= "" and Controls.Dig1_Power_Name.String or "Dig Proj1 Power"))
+    scrapeCorrectDP(2, Controls.Dig1_Video, "Dig1_Video", (Controls.Dig1_Video_Name.String ~= "" and Controls.Dig1_Video_Name.String or "Dig Proj1 Video"))
+    scrapeCorrectDP(3, Controls.Dig2_Power, "Dig2_Power", (Controls.Dig2_Power_Name.String ~= "" and Controls.Dig2_Power_Name.String or "Dig Proj2 Power"))
+    scrapeCorrectDP(4, Controls.Dig2_Video, "Dig2_Video", (Controls.Dig2_Video_Name.String ~= "" and Controls.Dig2_Video_Name.String or "Dig Proj2 Video"))
     -- Slide (Aux) Projector: unaffected by the above -- no unsolicited
     -- RPT,EVT exists for it (confirmed against the manual's full event
     -- list), so RST offers no faster path here; scrape remains the sole,
@@ -5960,14 +5994,19 @@ if Controls then
   -- ── Startup ─────────────────────────────────────────────────
   -- Initialise legends, set defaults, start timers, connect
 
-  -- Logging button colors (v1.4.0.21): green when enabled, dim red when
+  -- Logging button colors: light-blue when enabled, blue-grey when
   -- disabled, on every Event Log enable toggle (the page master Log_Enable
-  -- plus the six per-category enables, plus per-device Log_Enable_RDI_Dev).
-  -- Per Steve (2026-08-12): Enable = rgb(128,255,0) = #80FF00, Disable =
-  -- rgb(124,0,0) = #7C0000. Applied once here to reflect the saved/default
-  -- state at script start, then kept live via each button's own
-  -- EventHandler -- these controls had no EventHandler before this, so
-  -- nothing existing is being overridden.
+  -- plus the per-category enables, plus per-device Log_Enable_RDI_Dev).
+  -- Originally green/dim-red (v1.4.0.21, #80FF00/#7C0000); per Steve
+  -- (2026-08-15) changed in v1.4.0.30 to Enable = #C0EBFF (light-blue),
+  -- Disable = #5C717C (blue-grey, chosen over neutral grey #7C7C7C via
+  -- AskUserQuestion). Also in v1.4.0.30: Log_Enable_Dimmer and
+  -- Log_Enable_NanoHost added below -- both were missing from this block
+  -- since it was first written in v1.4.0.21 (an oversight, not
+  -- intentional). Applied once here to reflect the saved/default state at
+  -- script start, then kept live via each button's own EventHandler --
+  -- these controls had no EventHandler before v1.4.0.21, so nothing
+  -- existing is being overridden.
   do
     -- Packed with ZERO new locals -- inlined per-control, no loop
     -- variables (a generic-for loop's hidden iterator/state/control slots
@@ -5976,32 +6015,32 @@ if Controls then
     -- ceiling (see PingGate's own comment on the same constraint) --
     -- confirmed the hard way here too. Verbose/repetitive on purpose.
     if Controls.Log_Enable then
-      Controls.Log_Enable.Color = Controls.Log_Enable.Boolean and "#80FF00" or "#7C0000"
-      Controls.Log_Enable.EventHandler = function() Controls.Log_Enable.Color = Controls.Log_Enable.Boolean and "#80FF00" or "#7C0000" end
+      Controls.Log_Enable.Color = Controls.Log_Enable.Boolean and "#C0EBFF" or "#5C717C"
+      Controls.Log_Enable.EventHandler = function() Controls.Log_Enable.Color = Controls.Log_Enable.Boolean and "#C0EBFF" or "#5C717C" end
     end
     if Controls.Log_Enable_Connection then
-      Controls.Log_Enable_Connection.Color = Controls.Log_Enable_Connection.Boolean and "#80FF00" or "#7C0000"
-      Controls.Log_Enable_Connection.EventHandler = function() Controls.Log_Enable_Connection.Color = Controls.Log_Enable_Connection.Boolean and "#80FF00" or "#7C0000" end
+      Controls.Log_Enable_Connection.Color = Controls.Log_Enable_Connection.Boolean and "#C0EBFF" or "#5C717C"
+      Controls.Log_Enable_Connection.EventHandler = function() Controls.Log_Enable_Connection.Color = Controls.Log_Enable_Connection.Boolean and "#C0EBFF" or "#5C717C" end
     end
     if Controls.Log_Enable_Inputs then
-      Controls.Log_Enable_Inputs.Color = Controls.Log_Enable_Inputs.Boolean and "#80FF00" or "#7C0000"
-      Controls.Log_Enable_Inputs.EventHandler = function() Controls.Log_Enable_Inputs.Color = Controls.Log_Enable_Inputs.Boolean and "#80FF00" or "#7C0000" end
+      Controls.Log_Enable_Inputs.Color = Controls.Log_Enable_Inputs.Boolean and "#C0EBFF" or "#5C717C"
+      Controls.Log_Enable_Inputs.EventHandler = function() Controls.Log_Enable_Inputs.Color = Controls.Log_Enable_Inputs.Boolean and "#C0EBFF" or "#5C717C" end
     end
     if Controls.Log_Enable_Outputs then
-      Controls.Log_Enable_Outputs.Color = Controls.Log_Enable_Outputs.Boolean and "#80FF00" or "#7C0000"
-      Controls.Log_Enable_Outputs.EventHandler = function() Controls.Log_Enable_Outputs.Color = Controls.Log_Enable_Outputs.Boolean and "#80FF00" or "#7C0000" end
+      Controls.Log_Enable_Outputs.Color = Controls.Log_Enable_Outputs.Boolean and "#C0EBFF" or "#5C717C"
+      Controls.Log_Enable_Outputs.EventHandler = function() Controls.Log_Enable_Outputs.Color = Controls.Log_Enable_Outputs.Boolean and "#C0EBFF" or "#5C717C" end
     end
     if Controls.Log_Enable_Program then
-      Controls.Log_Enable_Program.Color = Controls.Log_Enable_Program.Boolean and "#80FF00" or "#7C0000"
-      Controls.Log_Enable_Program.EventHandler = function() Controls.Log_Enable_Program.Color = Controls.Log_Enable_Program.Boolean and "#80FF00" or "#7C0000" end
+      Controls.Log_Enable_Program.Color = Controls.Log_Enable_Program.Boolean and "#C0EBFF" or "#5C717C"
+      Controls.Log_Enable_Program.EventHandler = function() Controls.Log_Enable_Program.Color = Controls.Log_Enable_Program.Boolean and "#C0EBFF" or "#5C717C" end
     end
     if Controls.Log_Enable_Macros then
-      Controls.Log_Enable_Macros.Color = Controls.Log_Enable_Macros.Boolean and "#80FF00" or "#7C0000"
-      Controls.Log_Enable_Macros.EventHandler = function() Controls.Log_Enable_Macros.Color = Controls.Log_Enable_Macros.Boolean and "#80FF00" or "#7C0000" end
+      Controls.Log_Enable_Macros.Color = Controls.Log_Enable_Macros.Boolean and "#C0EBFF" or "#5C717C"
+      Controls.Log_Enable_Macros.EventHandler = function() Controls.Log_Enable_Macros.Color = Controls.Log_Enable_Macros.Boolean and "#C0EBFF" or "#5C717C" end
     end
     if Controls.Log_Enable_RDI then
-      Controls.Log_Enable_RDI.Color = Controls.Log_Enable_RDI.Boolean and "#80FF00" or "#7C0000"
-      Controls.Log_Enable_RDI.EventHandler = function() Controls.Log_Enable_RDI.Color = Controls.Log_Enable_RDI.Boolean and "#80FF00" or "#7C0000" end
+      Controls.Log_Enable_RDI.Color = Controls.Log_Enable_RDI.Boolean and "#C0EBFF" or "#5C717C"
+      Controls.Log_Enable_RDI.EventHandler = function() Controls.Log_Enable_RDI.Color = Controls.Log_Enable_RDI.Boolean and "#C0EBFF" or "#5C717C" end
     end
     -- Log_Enable_RDI_Dev is Count=RDI_COUNT (Num_RDI's own Max=5), which
     -- collapses to a bare control (not a table) in the Q-SYS Count=1 case
@@ -6009,30 +6048,42 @@ if Controls then
     -- 1-5 rather than a for loop, same local-budget reason as above.
     if Controls.Log_Enable_RDI_Dev then
       if RDI_COUNT == 1 then
-        Controls.Log_Enable_RDI_Dev.Color = Controls.Log_Enable_RDI_Dev.Boolean and "#80FF00" or "#7C0000"
-        Controls.Log_Enable_RDI_Dev.EventHandler = function() Controls.Log_Enable_RDI_Dev.Color = Controls.Log_Enable_RDI_Dev.Boolean and "#80FF00" or "#7C0000" end
+        Controls.Log_Enable_RDI_Dev.Color = Controls.Log_Enable_RDI_Dev.Boolean and "#C0EBFF" or "#5C717C"
+        Controls.Log_Enable_RDI_Dev.EventHandler = function() Controls.Log_Enable_RDI_Dev.Color = Controls.Log_Enable_RDI_Dev.Boolean and "#C0EBFF" or "#5C717C" end
       else
         if Controls.Log_Enable_RDI_Dev[1] then
-          Controls.Log_Enable_RDI_Dev[1].Color = Controls.Log_Enable_RDI_Dev[1].Boolean and "#80FF00" or "#7C0000"
-          Controls.Log_Enable_RDI_Dev[1].EventHandler = function() Controls.Log_Enable_RDI_Dev[1].Color = Controls.Log_Enable_RDI_Dev[1].Boolean and "#80FF00" or "#7C0000" end
+          Controls.Log_Enable_RDI_Dev[1].Color = Controls.Log_Enable_RDI_Dev[1].Boolean and "#C0EBFF" or "#5C717C"
+          Controls.Log_Enable_RDI_Dev[1].EventHandler = function() Controls.Log_Enable_RDI_Dev[1].Color = Controls.Log_Enable_RDI_Dev[1].Boolean and "#C0EBFF" or "#5C717C" end
         end
         if Controls.Log_Enable_RDI_Dev[2] then
-          Controls.Log_Enable_RDI_Dev[2].Color = Controls.Log_Enable_RDI_Dev[2].Boolean and "#80FF00" or "#7C0000"
-          Controls.Log_Enable_RDI_Dev[2].EventHandler = function() Controls.Log_Enable_RDI_Dev[2].Color = Controls.Log_Enable_RDI_Dev[2].Boolean and "#80FF00" or "#7C0000" end
+          Controls.Log_Enable_RDI_Dev[2].Color = Controls.Log_Enable_RDI_Dev[2].Boolean and "#C0EBFF" or "#5C717C"
+          Controls.Log_Enable_RDI_Dev[2].EventHandler = function() Controls.Log_Enable_RDI_Dev[2].Color = Controls.Log_Enable_RDI_Dev[2].Boolean and "#C0EBFF" or "#5C717C" end
         end
         if Controls.Log_Enable_RDI_Dev[3] then
-          Controls.Log_Enable_RDI_Dev[3].Color = Controls.Log_Enable_RDI_Dev[3].Boolean and "#80FF00" or "#7C0000"
-          Controls.Log_Enable_RDI_Dev[3].EventHandler = function() Controls.Log_Enable_RDI_Dev[3].Color = Controls.Log_Enable_RDI_Dev[3].Boolean and "#80FF00" or "#7C0000" end
+          Controls.Log_Enable_RDI_Dev[3].Color = Controls.Log_Enable_RDI_Dev[3].Boolean and "#C0EBFF" or "#5C717C"
+          Controls.Log_Enable_RDI_Dev[3].EventHandler = function() Controls.Log_Enable_RDI_Dev[3].Color = Controls.Log_Enable_RDI_Dev[3].Boolean and "#C0EBFF" or "#5C717C" end
         end
         if Controls.Log_Enable_RDI_Dev[4] then
-          Controls.Log_Enable_RDI_Dev[4].Color = Controls.Log_Enable_RDI_Dev[4].Boolean and "#80FF00" or "#7C0000"
-          Controls.Log_Enable_RDI_Dev[4].EventHandler = function() Controls.Log_Enable_RDI_Dev[4].Color = Controls.Log_Enable_RDI_Dev[4].Boolean and "#80FF00" or "#7C0000" end
+          Controls.Log_Enable_RDI_Dev[4].Color = Controls.Log_Enable_RDI_Dev[4].Boolean and "#C0EBFF" or "#5C717C"
+          Controls.Log_Enable_RDI_Dev[4].EventHandler = function() Controls.Log_Enable_RDI_Dev[4].Color = Controls.Log_Enable_RDI_Dev[4].Boolean and "#C0EBFF" or "#5C717C" end
         end
         if Controls.Log_Enable_RDI_Dev[5] then
-          Controls.Log_Enable_RDI_Dev[5].Color = Controls.Log_Enable_RDI_Dev[5].Boolean and "#80FF00" or "#7C0000"
-          Controls.Log_Enable_RDI_Dev[5].EventHandler = function() Controls.Log_Enable_RDI_Dev[5].Color = Controls.Log_Enable_RDI_Dev[5].Boolean and "#80FF00" or "#7C0000" end
+          Controls.Log_Enable_RDI_Dev[5].Color = Controls.Log_Enable_RDI_Dev[5].Boolean and "#C0EBFF" or "#5C717C"
+          Controls.Log_Enable_RDI_Dev[5].EventHandler = function() Controls.Log_Enable_RDI_Dev[5].Color = Controls.Log_Enable_RDI_Dev[5].Boolean and "#C0EBFF" or "#5C717C" end
         end
       end
+    end
+    -- v1.4.0.30: Log_Enable_Dimmer and Log_Enable_NanoHost, conditionally
+    -- created controls (only exist when QDC lighting / NanoHost are
+    -- enabled respectively) -- the "if Controls.X then" guard already
+    -- handles their absence cleanly, same as every other control above.
+    if Controls.Log_Enable_Dimmer then
+      Controls.Log_Enable_Dimmer.Color = Controls.Log_Enable_Dimmer.Boolean and "#C0EBFF" or "#5C717C"
+      Controls.Log_Enable_Dimmer.EventHandler = function() Controls.Log_Enable_Dimmer.Color = Controls.Log_Enable_Dimmer.Boolean and "#C0EBFF" or "#5C717C" end
+    end
+    if Controls.Log_Enable_NanoHost then
+      Controls.Log_Enable_NanoHost.Color = Controls.Log_Enable_NanoHost.Boolean and "#C0EBFF" or "#5C717C"
+      Controls.Log_Enable_NanoHost.EventHandler = function() Controls.Log_Enable_NanoHost.Color = Controls.Log_Enable_NanoHost.Boolean and "#C0EBFF" or "#5C717C" end
     end
   end
 
