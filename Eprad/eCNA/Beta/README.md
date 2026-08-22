@@ -51,12 +51,14 @@ The plugin contains up to eight pages:
 3. The plugin should populate and get the current status, at that point.  If it doesn't you may be using a port already occupied. 
 4. Drag out any desired buttons or LEDs that suit your design. The Aux buttons were deliberately not named to allow for integrator naming. 
 5. Expose the desired Input/Output pins to integrate the automation within a Q-SYS design.
-6. Configure Eprad QDC-400 dimmer properties to match the installed dimmer.  
+6. Configure Eprad QDC-400 dimmer properties to match the installed dimmer.
+7. Enable nanoHost if your system has one.
+8. Enable Event Logging if you desire for the Core to log messages from the eCNA. 
 
-## What's New in 1.3
+## What's New in 1.4
 
-- Added Eprad Nano Host monitoring.
-- Screen number is fetched on the Setup Page.
+- Added Event Logging.
+- Internal stability fixes.
 
 ## Images 
 
@@ -75,6 +77,11 @@ The plugin contains up to eight pages:
 <img width="683" height="557" alt="image" src="https://github.com/user-attachments/assets/764cb9cc-0ce7-462e-bc67-39cc0f794242" />
 
 <img width="754" height="1347" alt="image" src="https://github.com/user-attachments/assets/f19e6797-6375-41a5-8010-94cd311bd0e3" />
+
+<img width="638" height="704" alt="Screenshot 2026-08-22 at 11 34 22 AM" src="https://github.com/user-attachments/assets/5801aa18-8e22-4080-bb65-b08b1a72ad99" />
+
+<img width="1122" height="183" alt="Screenshot 2026-08-22 at 11 34 41 AM" src="https://github.com/user-attachments/assets/40a9d1c6-96a6-4028-9269-6c6c5705eba5" />
+
 
 ## Requirements
 
