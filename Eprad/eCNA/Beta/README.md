@@ -85,7 +85,7 @@ The plugin contains up to eight pages:
 
 ## Requirements
 
-- Q-SYS Designer 9.0 or higher (Primary development was on 9.13.1 LTS and checked on 9.4.8 LTS and 10.4.0)
+- Q-SYS Designer 9.0 or higher (Primary development was on 9.13.1 LTS and checked on 9.4.8 LTS, 9.13.2 LTS, and 10.4.0)
 - Q-SYS Core devices
 
 ## Support
