@@ -1,6 +1,6 @@
 Eprad eCNA Plugin Release Notes
 
-Beta Version 1.4 (build 30)
+Beta Version 1.4 (build 32)
 
 Added Logging (to Core's Event Log).  Logging must be enabled in Properties
 as well as on the Logging page and then each type of event to log.  
