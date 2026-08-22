@@ -4,6 +4,12 @@
 -- Eprad nanoHost POS management data.
 -- Reference: eCNA Operation and Installation Manual, Section 6
 --
+-- v1.1: user-defined names for the 16 Aux Input flags (In1-In16) and
+-- the 16 Aux Output flags (Out1-Out16), configured on the eCNA web
+-- interface (Setup -> Input Flag Names / Output Flag Names) and shown
+-- appended in brackets after the flag label wherever those flags are
+-- referenced.
+--
 -- v1.2: QDC-400 dimmer lighting (Status: Light Control web page, manual
 -- Section 5.9). The CAI protocol has no commands for Zone 3-16 lights,
 -- individual channel levels, or light level offset -- only House/Stage
@@ -42,9 +48,9 @@
 -- test_no_apostrophes.lua before any build ships.
 
 PluginInfo = {
-  Name         = "Eprad~eCNA v1.4.0.31",
+  Name         = "Eprad~eCNA v1.4.0.32",
   Manufacturer = "STG",
-  Version      = "1.4.0.31",
+  Version      = "1.4.0.32",
   Id           = "8cd1a925-90ba-4640-8de9-886632d1e242",
   Description  = "Controls the Eprad eCNA Cinema Automation system via the CAI ASCII TCP interface, with optional Eprad QDC dimmer lighting monitoring/control, optional Eprad nanoHost POS management data display, and optional Event Logging to Core Manager.",
   ShowDebug    = true,
@@ -57,7 +63,7 @@ PluginInfo = {
 -- which is the clean outward-facing release version. Beta builds keep all
 -- four version places identical in both -- the clean/internal split only
 -- happens at an actual numbered release, as 1.3.0 did at build 65.
-local BUILD_VERSION = "1.4.0.31"
+local BUILD_VERSION = "1.4.0.32"
 
 function GetColor(props)
   return { 72, 147, 217 }
@@ -408,33 +414,6 @@ function GetProperties(props)
     -- eCNA state up to 9x faster than the original 45s default, with no
     -- observed downside.
     { Name="RST_Poll_Interval", Type="double", Min=2, Max=55, Value=5 },
-    -- Enable_Ping_Gate: the eCNA's own web/HTTP daemon can take anywhere
-    -- from a few seconds to nearly a minute to start answering requests
-    -- after a reboot or cold power-on, even though its CAI (port 13002)
-    -- session and plain ICMP both come back promptly. When on, a real
-    -- disconnect (reboot/power-cycle case) or a script-start connect
-    -- against a not-yet-responding unit (already-off case) pauses CAI
-    -- reconnect and ALL HTTP traffic and instead watches plain ICMP echo
-    -- to the eCNA -- once it answers continuously for Ping_Stable_Window
-    -- seconds, normal reconnect/connect resumes. This does not fully
-    -- eliminate the eCNA's own slowness (an internal stall can still occur
-    -- on the other side of the wait in some cases), but it measurably
-    -- reduces both how often it happens and how long it lasts.
-    -- Default on (opt-out, not opt-in): ordinary brief network
-    -- interruptions (a dropped packet, a momentary switch hiccup) never
-    -- reach this gate at all -- CAI's own disconnect detection doesn't
-    -- declare a fault until a real outage of several seconds has already
-    -- occurred. A network unstable enough to trip this gate routinely is
-    -- already a larger problem this plugin shouldn't have to compensate
-    -- for.
-    { Name="Enable_Ping_Gate", Type="boolean", Value=true },
-    -- Ping_Stable_Window: how many continuous seconds of ICMP replies are
-    -- required before reconnect/connect resumes (see Enable_Ping_Gate
-    -- above). Left tunable, same rationale as RST_Poll_Interval, in case a
-    -- different eCNA firmware revision or install needs a different
-    -- margin. Min=5 avoids a window so short it stops being a meaningful
-    -- settling period; Max=60 is a practical ceiling.
-    { Name="Ping_Stable_Window", Type="integer", Min=5, Max=60, Value=20 },
     { Name="Scrape_Interval", Type="double",  Min=0.5,   Max=20, Value=2  },
     -- The dimmer LIGHTPOLL (/rtLights.xml) runs on its own slower cadence,
     -- decoupled from Scrape_Interval, so Scrape_Interval controls real
@@ -1958,8 +1937,8 @@ if Controls then
   -- A fresh "Status" Indicator control has no explicit Value in
   -- GetControls, so its raw numeric Value silently defaults to 0 -- which
   -- is STATUS_OK. With the ping gate (below) able to hold off any real
-  -- connection attempt for the full Ping_Stable_Window while a unit comes
-  -- up, that accidental default would otherwise sit there showing "OK"
+  -- connection attempt for its full 20s stability window while a unit
+  -- comes up, that accidental default would otherwise sit there showing "OK"
   -- with zero connectivity for the whole wait. This explicit initial call
   -- closes the gap -- runs synchronously at script load, before any
   -- timer, so nothing can observe the stale default.
@@ -2932,20 +2911,22 @@ if Controls then
     end
   end
 
-  -- Ping-gated reconnect -- see Enable_Ping_Gate's Properties comment for
-  -- the full rationale. Once a real disconnect is declared, pause ALL CAI
-  -- reconnect and HTTP traffic and instead watch for the eCNA answering
-  -- plain ICMP echo requests, which it keeps doing even while CAI/HTTP are
-  -- stalled during its own boot window. Only once ping stays up
-  -- continuously for Ping_Stable_Window seconds do we resume the real CAI
-  -- reconnect and HTTP scrape -- any dropped ping during that window
-  -- resets the stability clock back to zero rather than carrying over
-  -- partial credit. Packed as one table local (obj/timer/bootTimer/
-  -- preCheckWatchdog/active/counting/isBootWait/enabled/stableWindow as
-  -- table fields, not separate top-level locals) -- this file sits right
-  -- at Lua's 200-local-per-function ceiling, so `enabled` and
-  -- `stableWindow` are read from Properties directly into table fields
-  -- here instead of their own top-level locals.
+  -- Ping-gated reconnect. The eCNA's own web/HTTP daemon can take anywhere
+  -- from a few seconds to nearly a minute to start answering requests
+  -- after a reboot or cold power-on, even though its CAI (port 13002)
+  -- session and plain ICMP both come back promptly. Once a real
+  -- disconnect is declared, pause ALL CAI reconnect and HTTP traffic and
+  -- instead watch for the eCNA answering plain ICMP echo requests, which
+  -- it keeps doing even while CAI/HTTP are stalled during its own boot
+  -- window. Only once ping stays up continuously for the stability window
+  -- do we resume the real CAI reconnect and HTTP scrape -- any dropped
+  -- ping during that window resets the stability clock back to zero
+  -- rather than carrying over partial credit. This is a permanent,
+  -- fixed-20-second feature, not a user-configurable property. Packed as
+  -- one table local (obj/timer/bootTimer/preCheckWatchdog/active/
+  -- counting/isBootWait/enabled/stableWindow as table fields, not
+  -- separate top-level locals) -- this file sits right at Lua's
+  -- 200-local-per-function ceiling.
   --
   -- MUST be declared here, before sock.EventHandler -- that handler's real-
   -- fault branch is what calls PingGate.start(), and Lua's lexical scoping
@@ -2960,10 +2941,8 @@ if Controls then
   -- above (before this point), so PingGate.timer.EventHandler calling
   -- reconnectTmr:Start() is a normal, already-in-scope upvalue reference.
   local PingGate = {
-    -- `== nil` (not `and/or`) because the default is true -- Lua's
-    -- `and/or` idiom breaks for a true default.
-    enabled      = (Properties["Enable_Ping_Gate"] == nil) or Properties["Enable_Ping_Gate"].Value,
-    stableWindow = tonumber(Properties["Ping_Stable_Window"] and Properties["Ping_Stable_Window"].Value) or 20,
+    enabled      = true,  -- permanent feature, not user-configurable
+    stableWindow = 20,    -- fixed 20s stability window, not user-configurable
     obj        = nil,          -- Ping object; (re)created fresh each time .start() runs, since the target IP may have changed since the last gate
     timer      = Timer.New(),  -- counts the grace-period seconds once pings are landing
     bootTimer  = Timer.New(),  -- fires the ORIGINAL script-start bootstrap sequence (pollTimer/scrapeTimer/connect()/httpSock:Connect()) once it's actually safe to talk -- EventHandler assigned down in its natural bootstrap location, near the bottom of the file, since it needs pollTimer/scrapeTimer/connect/httpSock all in scope
@@ -3012,8 +2991,8 @@ if Controls then
   -- boot-time ping gate at the bottom of the file for why that path
   -- exists and how it differs from a post-fault reconnect gate: talking
   -- to the eCNA within roughly 10s of its first ICMP response during its
-  -- own boot sequence can wedge its web UI -- waiting Ping_Stable_Window
-  -- seconds after that first response measurably reduces both how often
+  -- own boot sequence can wedge its web UI -- waiting the 20s stability
+  -- window after that first response measurably reduces both how often
   -- that happens and how long it lasts when it still does. Also flips
   -- Status/Event Log to "Initializing" the moment that first ping lands,
   -- in the boot case only, so the UI and log reflect that the plugin is
@@ -3158,15 +3137,14 @@ if Controls then
       -- Ping gate: a Resource-Unavailable rejection means the
       -- eCNA's CAI session manager isn't ready yet -- it says nothing
       -- about ICMP, which has been fine the whole time (we only got this
-      -- far because a prior ping-gate wait already proved it, or the
-      -- gate is off). Re-arming the full gate wait here just adds
-      -- another Ping_Stable_Window seconds of pure latency for no added
-      -- safety -- ICMP was never in question. Skip straight to the
-      -- normal backed-off retry in that case. Otherwise, if the gate is
-      -- enabled, PingGate.start() takes over entirely (pausing CAI
-      -- reconnect + ALL HTTP traffic until ICMP proves stable) and the
-      -- normal backoff retry below is skipped; falls through to the
-      -- normal retry if the gate declines (feature off or no valid IP).
+      -- far because a prior ping-gate wait already proved it). Re-arming
+      -- the full gate wait here just adds another 20s of pure latency
+      -- for no added safety -- ICMP was never in question. Skip straight
+      -- to the normal backed-off retry in that case. Otherwise,
+      -- PingGate.start() takes over entirely (pausing CAI reconnect +
+      -- ALL HTTP traffic until ICMP proves stable) and the normal
+      -- backoff retry below is skipped; falls through to the
+      -- normal retry if the gate declines (no valid IP).
       if wasResourceUnavailable then
         dbg("Resource Unavailable -- ICMP never dropped, skipping ping-gate re-wait -- reconnecting in " .. delay .. "s (backed off)")
         reconnectTmr:Start(delay)
@@ -6073,7 +6051,7 @@ if Controls then
   end
   -- Boot-time ping gate: talking to the eCNA within roughly 10s of its
   -- first ICMP response during its own boot sequence can wedge its web
-  -- UI; waiting Ping_Stable_Window seconds after that first response
+  -- UI; waiting the 20s stability window after that first response
   -- measurably reduces both how often that happens and how long it lasts
   -- when it still does. Special-cased so a unit that's ALREADY up when the plugin
   -- starts -- the common case, eCNA was never power-cycled -- pays no
