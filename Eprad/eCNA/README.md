@@ -48,7 +48,7 @@ The plugin contains up to eight pages:
 3. The plugin should populate and get the current status, at that point.  If it doesn't you may be using a port already occupied. 
 4. Drag out any desired buttons or LEDs that suit your design. The Aux buttons were deliberately not named to allow for integrator naming. 
 5. Expose the desired Input/Output pins to integrate the automation within a Q-SYS design.
-6. Configure Eprad QDC-400 dimmer properties to mach the installed dimmer.  
+6. Configure Eprad QDC-400 dimmer properties to match the installed dimmer.  
 
 ## What's New in 1.3
 
