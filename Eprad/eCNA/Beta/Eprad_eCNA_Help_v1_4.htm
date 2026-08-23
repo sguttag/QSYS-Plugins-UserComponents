@@ -479,6 +479,7 @@
         <h2><a name="EventLog"></a>Event Logging</h2>
         <p>When <span class="GUI_Callout">Enable Event Log</span> is turned on in Properties, the plugin adds an <span class="GUI_Callout">Event Log</span> page (appended last) that sends selected state changes to the Q-SYS Core Manager Event Log, alongside a short on-page history of the most recent entries actually sent.</p>
         <p class="note"><b>Note: </b>An entry is added to the Event Log based on the categories enabled below.</p>
+        <p class="note"><b>Note: </b>Each entry's timestamp reflects when the plugin received the information from the eCNA, not necessarily the exact moment the change occurred on the eCNA itself. Some latency is normal and expected, due to the polling intervals involved and the communication time between the eCNA and the plugin.</p>
 
         <h3>Enable and Categories</h3>
         <p>A master <span class="GUI_Callout">Enable</span> toggle at the top of the page turns Event Logging on or off entirely; none of the category toggles below have any effect unless it's on. Each category below is independent and defaults off:</p>
