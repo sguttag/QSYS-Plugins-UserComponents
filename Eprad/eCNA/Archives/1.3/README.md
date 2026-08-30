@@ -1,6 +1,6 @@
 # Eprad eCNA Plugin
 
-Version: 1.4
+Version: 1.3
 
 Author: Steve Guttag
 
@@ -14,7 +14,6 @@ The Eprad eCNA plugin is designed to aid in the integration of the Eprad eCNA li
 - **Program Control and Monitoring**: The eCNA can run a traditional cinema automation program (step through a program one cue at a time).
 - **Eprad Dimmer Monitoring and Control**: As of version 1.2, the plugin can now monitor and control an Eprad QDC-400 type dimmer.
 - **Eprad nanoHost Monitoring**: As of version 1.3, the plugin can now monitor the Eprad nanoHost.
-- **Event Logging**: New in version 1.4, the plugin can now add make log entries into the Core's Event Logs (within Core Manager).
 
 ## Pages
 
@@ -27,8 +26,7 @@ The plugin contains up to eight pages:
 5. **Macros**: Macro Execution Trigger Buttons.
 6. **RDI**: RDI Execution Trigger Buttons.
 7. **Program**: eCNA Program control and Mmonitoring.
-8. **NanoHost**: Option (Configured in Properties) to monitor the Eprad nanoHost (show schedules).
-9. **Event Log**: Option (Configured in Properties) to add Event Logs from the eCNA within Core Manager. 
+8. **NanoHost**: Option (Configured in Properties) to monitor the Eprad nanoHost (show schedules).  
 
 ## Properties
 
@@ -40,8 +38,7 @@ The plugin contains up to eight pages:
 - **EnableQDC_Lighting**: When set to Yes (default is No) the Dimmer Control Tab is revealed.
 - **QDCZones**: Set the number of lighting Zones (1-16) for the QDC-400 dimmer (default is 2; House and Stage).
 - **QDCChannels**: Set the number of QDC-400 dimmer channels (1-16) (default is 2). 
-- **EnableNanoHost**: When set to Yes (default is No) the NanoHost tab is revealed.
-- **EnableEvent_Log**: When set to Yes (default is No) The Event Log tab is revealed.
+- **EnableNanoHost**: When set to Yes (default is No) the NanoHost tab is revealed. 
 - **Show Debug**:  Standard Q-SYS Debug window.
 
 ## Usage
@@ -51,14 +48,12 @@ The plugin contains up to eight pages:
 3. The plugin should populate and get the current status, at that point.  If it doesn't you may be using a port already occupied. 
 4. Drag out any desired buttons or LEDs that suit your design. The Aux buttons were deliberately not named to allow for integrator naming. 
 5. Expose the desired Input/Output pins to integrate the automation within a Q-SYS design.
-6. Configure Eprad QDC-400 dimmer properties to match the installed dimmer.
-7. Enable nanoHost if your system has one.
-8. Enable Event Logging if you desire for the Core to log messages from the eCNA. 
+6. Configure Eprad QDC-400 dimmer properties to match the installed dimmer.  
 
-## What's New in 1.4
+## What's New in 1.3
 
-- Added Event Logging.
-- Internal stability fixes.
+- Added Eprad Nano Host monitoring.
+- Screen number is fetched on the Setup Page.
 
 ## Images 
 
@@ -78,14 +73,9 @@ The plugin contains up to eight pages:
 
 <img width="754" height="1347" alt="image" src="https://github.com/user-attachments/assets/f19e6797-6375-41a5-8010-94cd311bd0e3" />
 
-<img width="638" height="704" alt="Screenshot 2026-08-22 at 11 34 22 AM" src="https://github.com/user-attachments/assets/5801aa18-8e22-4080-bb65-b08b1a72ad99" />
-
-<img width="1122" height="183" alt="Screenshot 2026-08-22 at 11 34 41 AM" src="https://github.com/user-attachments/assets/40a9d1c6-96a6-4028-9269-6c6c5705eba5" />
-
-
 ## Requirements
 
-- Q-SYS Designer 9.0 or higher (Primary development was on 9.13.1 LTS and checked on 9.4.8 LTS, 9.13.2 LTS, and 10.4.0)
+- Q-SYS Designer 9.0 or higher (Primary development was on 9.13.1 LTS and checked on 9.4.8 LTS and 10.4.0)
 - Q-SYS Core devices
 
 ## Support
