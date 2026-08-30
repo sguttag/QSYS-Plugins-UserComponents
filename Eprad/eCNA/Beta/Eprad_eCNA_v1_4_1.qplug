@@ -25,7 +25,7 @@
 -- flag-type outputs (Day Start/Day End/First Show End/Last Show Start)
 -- documented near their own implementations further down.
 --
--- v1.4 (beta): optional Event Logging to Core Manager (Log.Message/
+-- v1.4: optional Event Logging to Core Manager (Log.Message/
 -- Log.Error), gated by Enable_Event_Log plus a page master Enable and six
 -- per-category enables (Connection/Inputs/Outputs/Program/Macros/RDI). Off
 -- by default at every tier. See logEvent() and its call sites below.
@@ -48,9 +48,9 @@
 -- test_no_apostrophes.lua before any build ships.
 
 PluginInfo = {
-  Name         = "Eprad~eCNA v1.4.0.32",
+  Name         = "Eprad~eCNA v1.4.1",
   Manufacturer = "STG",
-  Version      = "1.4.0.32",
+  Version      = "1.4.1",
   Id           = "8cd1a925-90ba-4640-8de9-886632d1e242",
   Description  = "Controls the Eprad eCNA Cinema Automation system via the CAI ASCII TCP interface, with optional Eprad QDC dimmer lighting monitoring/control, optional Eprad nanoHost POS management data display, and optional Event Logging to Core Manager.",
   ShowDebug    = true,
@@ -62,8 +62,9 @@ PluginInfo = {
 -- identified for support purposes -- distinct from PluginInfo.Version,
 -- which is the clean outward-facing release version. Beta builds keep all
 -- four version places identical in both -- the clean/internal split only
--- happens at an actual numbered release, as 1.3.0 did at build 65.
-local BUILD_VERSION = "1.4.0.32"
+-- happens at an actual numbered release, as 1.3.0 did at build 65 and
+-- 1.4.0 did at build 32.
+local BUILD_VERSION = "1.4.1.33"
 
 function GetColor(props)
   return { 72, 147, 217 }
@@ -208,11 +209,19 @@ function GetControls(props)
   -- brackets after the flag's own label in Event Log messages (matching
   -- the In/Out flag and Macro/RDI naming convention elsewhere in this
   -- plugin), e.g. "Dig Proj1 Power [House Left]". Blank leaves the message
-  -- as just the flag label. Does not rename the buttons themselves.
-  table.insert(ctrls, { Name="Dig1_Power_Name", ControlType="Text", Count=1, UserPin=true, PinStyle="Input", Description="Event Log name for Dig Proj1 Power, appended in brackets (blank = none)" })
-  table.insert(ctrls, { Name="Dig1_Video_Name", ControlType="Text", Count=1, UserPin=true, PinStyle="Input", Description="Event Log name for Dig Proj1 Video, appended in brackets (blank = none)" })
-  table.insert(ctrls, { Name="Dig2_Power_Name", ControlType="Text", Count=1, UserPin=true, PinStyle="Input", Description="Event Log name for Dig Proj2 Power, appended in brackets (blank = none)" })
-  table.insert(ctrls, { Name="Dig2_Video_Name", ControlType="Text", Count=1, UserPin=true, PinStyle="Input", Description="Event Log name for Dig Proj2 Video, appended in brackets (blank = none)" })
+  -- as just the flag label. Does not rename the buttons themselves. Gated
+  -- on Enable_Event_Log, same as the rest of the Event Log page's controls
+  -- further below -- these only exist and only lay out together, since
+  -- they only ever affect Event Log message text. (Read inline here,
+  -- rather than reusing the enableEventLog local declared further down in
+  -- this function, since that declaration is textually later than this
+  -- point.)
+  if (props["Enable_Event_Log"] and props["Enable_Event_Log"].Value or false) then
+    table.insert(ctrls, { Name="Dig1_Power_Name", ControlType="Text", Count=1, UserPin=true, PinStyle="Input", Description="Event Log name for Dig Proj1 Power, appended in brackets (blank = none)" })
+    table.insert(ctrls, { Name="Dig1_Video_Name", ControlType="Text", Count=1, UserPin=true, PinStyle="Input", Description="Event Log name for Dig Proj1 Video, appended in brackets (blank = none)" })
+    table.insert(ctrls, { Name="Dig2_Power_Name", ControlType="Text", Count=1, UserPin=true, PinStyle="Input", Description="Event Log name for Dig Proj2 Power, appended in brackets (blank = none)" })
+    table.insert(ctrls, { Name="Dig2_Video_Name", ControlType="Text", Count=1, UserPin=true, PinStyle="Input", Description="Event Log name for Dig Proj2 Video, appended in brackets (blank = none)" })
+  end
 
   -- Aux digital outputs 1-16 (Toggle - state driven by scrape)
   table.insert(ctrls, { Name="Aux_Out", ControlType="Button", Count=16, UserPin=true, PinStyle="Both", ButtonType="Toggle", Description="Aux Outputs 1-16" })
@@ -2778,10 +2787,10 @@ if Controls then
     -- (periodic, reactive, or the one-time post-connect poll) authoritatively
     -- sets these 4 -- see scrape() for the mismatch-correction backstop.
     if #f >= 16 then
-      setBoolLogged(Controls.Dig1_Power, "Dig1_Power", ("Dig Proj1 Power" .. (Controls.Dig1_Power_Name.String ~= "" and " [" .. Controls.Dig1_Power_Name.String .. "]" or "")), (f[10] == "D1P"))
-      setBoolLogged(Controls.Dig1_Video, "Dig1_Video", ("Dig Proj1 Video" .. (Controls.Dig1_Video_Name.String ~= "" and " [" .. Controls.Dig1_Video_Name.String .. "]" or "")), (f[12] == "D1V"))
-      setBoolLogged(Controls.Dig2_Power, "Dig2_Power", ("Dig Proj2 Power" .. (Controls.Dig2_Power_Name.String ~= "" and " [" .. Controls.Dig2_Power_Name.String .. "]" or "")), (f[14] == "D2P"))
-      setBoolLogged(Controls.Dig2_Video, "Dig2_Video", ("Dig Proj2 Video" .. (Controls.Dig2_Video_Name.String ~= "" and " [" .. Controls.Dig2_Video_Name.String .. "]" or "")), (f[16] == "D2V"))
+      setBoolLogged(Controls.Dig1_Power, "Dig1_Power", ("Dig Proj1 Power" .. (Controls.Dig1_Power_Name and Controls.Dig1_Power_Name.String ~= "" and " [" .. Controls.Dig1_Power_Name.String .. "]" or "")), (f[10] == "D1P"))
+      setBoolLogged(Controls.Dig1_Video, "Dig1_Video", ("Dig Proj1 Video" .. (Controls.Dig1_Video_Name and Controls.Dig1_Video_Name.String ~= "" and " [" .. Controls.Dig1_Video_Name.String .. "]" or "")), (f[12] == "D1V"))
+      setBoolLogged(Controls.Dig2_Power, "Dig2_Power", ("Dig Proj2 Power" .. (Controls.Dig2_Power_Name and Controls.Dig2_Power_Name.String ~= "" and " [" .. Controls.Dig2_Power_Name.String .. "]" or "")), (f[14] == "D2P"))
+      setBoolLogged(Controls.Dig2_Video, "Dig2_Video", ("Dig Proj2 Video" .. (Controls.Dig2_Video_Name and Controls.Dig2_Video_Name.String ~= "" and " [" .. Controls.Dig2_Video_Name.String .. "]" or "")), (f[16] == "D2V"))
       dpMismatch[1] = 0; dpMismatch[2] = 0; dpMismatch[3] = 0; dpMismatch[4] = 0
     end
     -- Note: Aux_Projector (Slide Projector, "SLD" on this hardware rather
@@ -2864,14 +2873,14 @@ if Controls then
   local function parseRPTEVT(fields)
     local evt = fields[4] or ""
     dbg("RPT EVT: " .. evt)
-    if     evt == "DP1ON"  then setBoolLogged(Controls.Dig1_Power, "Dig1_Power", ("Dig Proj1 Power" .. (Controls.Dig1_Power_Name.String ~= "" and " [" .. Controls.Dig1_Power_Name.String .. "]" or "")), true);  dpMismatch[1] = 0
-    elseif evt == "DP1OFF" then setBoolLogged(Controls.Dig1_Power, "Dig1_Power", ("Dig Proj1 Power" .. (Controls.Dig1_Power_Name.String ~= "" and " [" .. Controls.Dig1_Power_Name.String .. "]" or "")), false); dpMismatch[1] = 0
-    elseif evt == "DV1ON"  then setBoolLogged(Controls.Dig1_Video, "Dig1_Video", ("Dig Proj1 Video" .. (Controls.Dig1_Video_Name.String ~= "" and " [" .. Controls.Dig1_Video_Name.String .. "]" or "")), true);  dpMismatch[2] = 0
-    elseif evt == "DV1OFF" then setBoolLogged(Controls.Dig1_Video, "Dig1_Video", ("Dig Proj1 Video" .. (Controls.Dig1_Video_Name.String ~= "" and " [" .. Controls.Dig1_Video_Name.String .. "]" or "")), false); dpMismatch[2] = 0
-    elseif evt == "DP2ON"  then setBoolLogged(Controls.Dig2_Power, "Dig2_Power", ("Dig Proj2 Power" .. (Controls.Dig2_Power_Name.String ~= "" and " [" .. Controls.Dig2_Power_Name.String .. "]" or "")), true);  dpMismatch[3] = 0
-    elseif evt == "DP2OFF" then setBoolLogged(Controls.Dig2_Power, "Dig2_Power", ("Dig Proj2 Power" .. (Controls.Dig2_Power_Name.String ~= "" and " [" .. Controls.Dig2_Power_Name.String .. "]" or "")), false); dpMismatch[3] = 0
-    elseif evt == "DV2ON"  then setBoolLogged(Controls.Dig2_Video, "Dig2_Video", ("Dig Proj2 Video" .. (Controls.Dig2_Video_Name.String ~= "" and " [" .. Controls.Dig2_Video_Name.String .. "]" or "")), true);  dpMismatch[4] = 0
-    elseif evt == "DV2OFF" then setBoolLogged(Controls.Dig2_Video, "Dig2_Video", ("Dig Proj2 Video" .. (Controls.Dig2_Video_Name.String ~= "" and " [" .. Controls.Dig2_Video_Name.String .. "]" or "")), false); dpMismatch[4] = 0
+    if     evt == "DP1ON"  then setBoolLogged(Controls.Dig1_Power, "Dig1_Power", ("Dig Proj1 Power" .. (Controls.Dig1_Power_Name and Controls.Dig1_Power_Name.String ~= "" and " [" .. Controls.Dig1_Power_Name.String .. "]" or "")), true);  dpMismatch[1] = 0
+    elseif evt == "DP1OFF" then setBoolLogged(Controls.Dig1_Power, "Dig1_Power", ("Dig Proj1 Power" .. (Controls.Dig1_Power_Name and Controls.Dig1_Power_Name.String ~= "" and " [" .. Controls.Dig1_Power_Name.String .. "]" or "")), false); dpMismatch[1] = 0
+    elseif evt == "DV1ON"  then setBoolLogged(Controls.Dig1_Video, "Dig1_Video", ("Dig Proj1 Video" .. (Controls.Dig1_Video_Name and Controls.Dig1_Video_Name.String ~= "" and " [" .. Controls.Dig1_Video_Name.String .. "]" or "")), true);  dpMismatch[2] = 0
+    elseif evt == "DV1OFF" then setBoolLogged(Controls.Dig1_Video, "Dig1_Video", ("Dig Proj1 Video" .. (Controls.Dig1_Video_Name and Controls.Dig1_Video_Name.String ~= "" and " [" .. Controls.Dig1_Video_Name.String .. "]" or "")), false); dpMismatch[2] = 0
+    elseif evt == "DP2ON"  then setBoolLogged(Controls.Dig2_Power, "Dig2_Power", ("Dig Proj2 Power" .. (Controls.Dig2_Power_Name and Controls.Dig2_Power_Name.String ~= "" and " [" .. Controls.Dig2_Power_Name.String .. "]" or "")), true);  dpMismatch[3] = 0
+    elseif evt == "DP2OFF" then setBoolLogged(Controls.Dig2_Power, "Dig2_Power", ("Dig Proj2 Power" .. (Controls.Dig2_Power_Name and Controls.Dig2_Power_Name.String ~= "" and " [" .. Controls.Dig2_Power_Name.String .. "]" or "")), false); dpMismatch[3] = 0
+    elseif evt == "DV2ON"  then setBoolLogged(Controls.Dig2_Video, "Dig2_Video", ("Dig Proj2 Video" .. (Controls.Dig2_Video_Name and Controls.Dig2_Video_Name.String ~= "" and " [" .. Controls.Dig2_Video_Name.String .. "]" or "")), true);  dpMismatch[4] = 0
+    elseif evt == "DV2OFF" then setBoolLogged(Controls.Dig2_Video, "Dig2_Video", ("Dig Proj2 Video" .. (Controls.Dig2_Video_Name and Controls.Dig2_Video_Name.String ~= "" and " [" .. Controls.Dig2_Video_Name.String .. "]" or "")), false); dpMismatch[4] = 0
     end
     if evt=="START" or evt=="IDLE"    or evt=="ALLSTOP"
     or evt=="DP1ON" or evt=="DP1OFF"  or evt=="DV1ON"  or evt=="DV1OFF"
@@ -4556,10 +4565,10 @@ if Controls then
         end
       end
     end
-    scrapeCorrectDP(1, Controls.Dig1_Power, "Dig1_Power", ("Dig Proj1 Power" .. (Controls.Dig1_Power_Name.String ~= "" and " [" .. Controls.Dig1_Power_Name.String .. "]" or "")))
-    scrapeCorrectDP(2, Controls.Dig1_Video, "Dig1_Video", ("Dig Proj1 Video" .. (Controls.Dig1_Video_Name.String ~= "" and " [" .. Controls.Dig1_Video_Name.String .. "]" or "")))
-    scrapeCorrectDP(3, Controls.Dig2_Power, "Dig2_Power", ("Dig Proj2 Power" .. (Controls.Dig2_Power_Name.String ~= "" and " [" .. Controls.Dig2_Power_Name.String .. "]" or "")))
-    scrapeCorrectDP(4, Controls.Dig2_Video, "Dig2_Video", ("Dig Proj2 Video" .. (Controls.Dig2_Video_Name.String ~= "" and " [" .. Controls.Dig2_Video_Name.String .. "]" or "")))
+    scrapeCorrectDP(1, Controls.Dig1_Power, "Dig1_Power", ("Dig Proj1 Power" .. (Controls.Dig1_Power_Name and Controls.Dig1_Power_Name.String ~= "" and " [" .. Controls.Dig1_Power_Name.String .. "]" or "")))
+    scrapeCorrectDP(2, Controls.Dig1_Video, "Dig1_Video", ("Dig Proj1 Video" .. (Controls.Dig1_Video_Name and Controls.Dig1_Video_Name.String ~= "" and " [" .. Controls.Dig1_Video_Name.String .. "]" or "")))
+    scrapeCorrectDP(3, Controls.Dig2_Power, "Dig2_Power", ("Dig Proj2 Power" .. (Controls.Dig2_Power_Name and Controls.Dig2_Power_Name.String ~= "" and " [" .. Controls.Dig2_Power_Name.String .. "]" or "")))
+    scrapeCorrectDP(4, Controls.Dig2_Video, "Dig2_Video", ("Dig Proj2 Video" .. (Controls.Dig2_Video_Name and Controls.Dig2_Video_Name.String ~= "" and " [" .. Controls.Dig2_Video_Name.String .. "]" or "")))
     -- Slide (Aux) Projector: unaffected by the above -- no unsolicited
     -- RPT,EVT exists for it (confirmed against the manual's full event
     -- list), so RST offers no faster path here; scrape remains the sole,
