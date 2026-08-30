@@ -12,7 +12,7 @@ as well as on the Logging page and then each type of event to log.
 Provided for custom naming (in the Event Logs) for Digital Projector 1 and 2
 both Power and Video.
 
-Added some connection mitigation strategies (PingGate, default 20-seconds).  
+Added some connection mitigation strategies.  
 
 Improved "Reconnect" handling.
 
