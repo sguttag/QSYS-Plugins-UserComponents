@@ -1,5 +1,11 @@
 Eprad eCNA Plugin Release Notes
 
+Version 1.4.2 (build 35)
+
+Dimmer polling interval is hidden unless the dimmer option is enabled.
+
+Internal bug fixes to satisfy the checker. 
+
 Version 1.4.1 (build 33)
 
 Minor internal fixes flagged by Plugin Checker.
