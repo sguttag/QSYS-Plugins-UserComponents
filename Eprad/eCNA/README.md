@@ -14,7 +14,7 @@ The Eprad eCNA plugin is designed to aid in the integration of the Eprad eCNA li
 - **Program Control and Monitoring**: The eCNA can run a traditional cinema automation program (step through a program one cue at a time).
 - **Eprad Dimmer Monitoring and Control**: As of version 1.2, the plugin can now monitor and control an Eprad QDC-400 type dimmer.
 - **Eprad nanoHost Monitoring**: As of version 1.3, the plugin can now monitor the Eprad nanoHost.
-- **Event Logging**: New in version 1.4, the plugin can now add make log entries into the Core's Event Logs (within Core Manager).
+- **Event Logging**: New in version 1.4, the plugin can now make log entries into the Core's Event Logs (within Core Manager).
 
 ## Pages
 
